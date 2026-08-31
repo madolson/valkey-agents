@@ -1,0 +1,24 @@
+name: OIDC probe (temporary)
+on:
+  pull_request:
+    paths: ['.github/workflows/oidc-probe.yml']
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+      - run: aws sts get-caller-identity
+      - name: Invoke Bedrock
+        run: |
+          printf '%s' '{"anthropic_version":"bedrock-2023-05-31","max_tokens":16,"messages":[{"role":"user","content":"Reply with the single word: reachable"}]}' > body.json
+          aws bedrock-runtime invoke-model \
+            --model-id global.anthropic.claude-opus-5 \
+            --body fileb://body.json --content-type application/json out.json
+          cat out.json
