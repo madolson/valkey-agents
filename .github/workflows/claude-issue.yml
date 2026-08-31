@@ -1,0 +1,66 @@
+name: Claude – Issue to PR
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: claude-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event.label.name == 'ai:implement'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          use_bedrock: "true"
+          github_token: ${{ steps.app-token.outputs.token }}
+          prompt: |
+            You are implementing GitHub issue #${{ github.event.issue.number }}
+            in ${{ github.repository }}.
+
+            1. Read the issue with the GitHub tools.
+            2. Create a branch named claude/issue-${{ github.event.issue.number }}.
+            3. Implement the change per CLAUDE.md and AGENTS.md. Keep the diff minimal.
+            4. Run `make`, then the smallest relevant test scope, then clang-format-18 on
+               modified C/C++ files. Fix failures before proceeding.
+            5. Open a pull request to unstable. Title it
+               "[#${{ github.event.issue.number }}] <short description>".
+               Include "Fixes #${{ github.event.issue.number }}" in the body,
+               what changed and why, and the exact test commands you ran with results.
+            6. Comment on the issue with a link to the PR.
+
+            Sign off every commit with `git commit -s`.
+            If you cannot finish, open a draft PR with your progress, comment on the issue
+            explaining what blocked you, and add the `ai:blocked` label.
+          claude_args: |
+            --model global.anthropic.claude-opus-5
+            --max-turns 50
+            --allowedTools "Bash(git:*),Bash(make:*),Bash(cmake:*),Bash(./runtest:*),Bash(./runtest-cluster:*),Bash(./runtest-moduleapi:*),Bash(./src/unit/valkey-unit-gtests:*),Bash(clang-format-18:*),Bash(clang-format:*),Bash(ls:*),Bash(find:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Edit,Read,Write,Glob,Grep,mcp__github__*"

@@ -1,0 +1,52 @@
+name: Claude – PR Responder
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: claude-pr-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  respond:
+    if: contains(github.event.comment.body || github.event.review.body, '@claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          use_bedrock: "true"
+          github_token: ${{ steps.app-token.outputs.token }}
+          claude_args: |
+            --model global.anthropic.claude-opus-5
+            --max-turns 30
+            --allowedTools "Bash(git:*),Bash(make:*),Bash(cmake:*),Bash(./runtest:*),Bash(./runtest-cluster:*),Bash(./runtest-moduleapi:*),Bash(./src/unit/valkey-unit-gtests:*),Bash(clang-format-18:*),Bash(clang-format:*),Bash(ls:*),Bash(find:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Edit,Read,Write,Glob,Grep,mcp__github__*"
