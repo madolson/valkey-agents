@@ -22,6 +22,10 @@ uint32_t allvalues : 1; /* Slots hold values, not child nodes. */
 uint32_t size : 28;     /* Child count, or compressed string length. */
 ```
 
+`allvalues` is not in `unstable`, where the header is `iskey`, `isnull`,
+`iscompr` and `size : 29`. It comes from the three rax commits listed under
+[Related](#related), which every measurement below has applied.
+
 Two space optimizations do most of the work:
 
 **`iscompr`** collapses a chain of single-child nodes into one inline string, so
@@ -121,9 +125,30 @@ byte strings with no encoder, which prefix-ancestor lookup and stream ID ranges
 depend on, and its one-allocation-per-node model is what `activedefrag` relocates
 one node at a time.
 
+## Relation to the proposed RADIX type
+
+[PR #4506](https://github.com/valkey-io/valkey/pull/4506) adds a `RADIX` type
+built on rax. Where it touches what this document measures:
+
+- It extends rax with `raxFindLongestPrefix` and `raxForEachPrefix`
+  (`src/rax.c` +65, `src/rax.h` +7). Neither is exercised here; the numbers
+  above are insert and find only.
+- Its rax value is one pointer to the listpack or dict holding a path's field
+  map, so the stored value is 8 bytes, the width used above. `allvalues`
+  therefore applies to it.
+- Its paths are application-encoded fixed-width big-endian cumulative hashes,
+  8 bytes per block, so a three-block query path is 24 bytes. The random 16B
+  and 32B rows are the nearest measured key lengths.
+- It does not depend on the three rax commits below, and nothing here evaluates
+  its commands, RDB format or field-map encoding.
+
 ## Related
 
 - [PR #4506](https://github.com/valkey-io/valkey/pull/4506) — proposed RADIX
   type, adds `raxForEachPrefix` and `raxFindLongestPrefix`.
 - [Issue #4498](https://github.com/valkey-io/valkey/issues/4498) — discussion.
 - [ART paper](https://db.in.tum.de/~leis/papers/ART.pdf) — Leis et al., ICDE 2013.
+- The rax commits the measurements assume, not yet pushed anywhere:
+  `rax: allocate insert-path nodes at their final size`,
+  `rax: check the last edge first when adding a child`,
+  `rax: store a childless key's value in its parent's slot`.
