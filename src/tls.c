@@ -645,29 +645,19 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         goto error;
     }
 
-    int primary_alg = NID_undef;
+    /* INFO reporting only. A failure leaves the field as none rather than refusing the
+     * configuration. The pairing check below guarantees this certificate has a key. */
+    if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
+
     if (alt_cert_file) {
         EVP_PKEY *primary_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
         if (!primary_pkey) {
             serverLog(LL_WARNING, "Could not get public key from primary certificate");
             goto error;
         }
-        primary_alg = EVP_PKEY_base_id(primary_pkey);
+        int primary_alg = EVP_PKEY_base_id(primary_pkey);
         EVP_PKEY_free(primary_pkey);
-    }
 
-    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
-        ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
-        serverLog(LL_WARNING, "Failed to load private key: %s: %s", key_file, errbuf);
-        goto error;
-    }
-
-    /* Record the certificate the key just activated, which is the one the server can
-     * actually present. INFO reporting only: a failure leaves the field as none rather
-     * than refusing the configuration. */
-    if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
-
-    if (alt_cert_file) {
         if (SSL_CTX_use_certificate_chain_file(ctx, alt_cert_file) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
             serverLog(LL_WARNING, "Failed to load certificate: %s: %s", alt_cert_file, errbuf);
@@ -691,14 +681,35 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
             serverLog(LL_WARNING, "Primary and alternate certificates must use different key algorithms");
             goto error;
         }
+        if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->alt_cert_expiry, &out_info->alt_cert_serial);
+    }
 
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
+        serverLog(LL_WARNING, "Failed to load private key: %s: %s", key_file, errbuf);
+        goto error;
+    }
+    if (alt_key_file) {
         SSL_CTX_set_default_passwd_cb_userdata(ctx, (void *)alt_key_file_pass);
         if (SSL_CTX_use_PrivateKey_file(ctx, alt_key_file, SSL_FILETYPE_PEM) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
             serverLog(LL_WARNING, "Failed to load private key: %s: %s", alt_key_file, errbuf);
             goto error;
         }
-        if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->alt_cert_expiry, &out_info->alt_cert_serial);
+    }
+
+    /* Every configured certificate must have ended up with a matching private key.
+     * OpenSSL routes a key to the slot for its own key algorithm and only checks it
+     * against whatever certificate is already in that slot, so a mismatched pair can
+     * leave a certificate loaded with no key rather than failing outright. Such a
+     * certificate cannot be presented, and only the slots holding both are usable. */
+    int usable_certs = 0;
+    for (int op = SSL_CERT_SET_FIRST; SSL_CTX_set_current_cert(ctx, op) == 1; op = SSL_CERT_SET_NEXT) {
+        usable_certs++;
+    }
+    if (usable_certs != (alt_cert_file ? 2 : 1)) {
+        serverLog(LL_WARNING, "%s TLS certificate does not match its private key.", client ? "Client" : "Server");
+        goto error;
     }
 
     if (ctx_config->ca_cert_file || ctx_config->ca_cert_dir) {

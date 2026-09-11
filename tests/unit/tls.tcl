@@ -276,6 +276,36 @@ start_server {tags {"tls"}} {
             }
         }
 
+        test {TLS: a certificate without a matching key is rejected} {
+            set orig_crt [lindex [r config get tls-cert-file] 1]
+            set orig_key [lindex [r config get tls-key-file] 1]
+            set orig_alt_crt [lindex [r config get tls-alt-cert-file] 1]
+            set orig_alt_key [lindex [r config get tls-alt-key-file] 1]
+
+            set rsa_crt [format "%s/tests/tls/valkey.crt" [pwd]]
+            set rsa_key [format "%s/tests/tls/valkey.key" [pwd]]
+            set ec_crt [format "%s/tests/tls/valkey-ec.crt" [pwd]]
+            set ec_key [format "%s/tests/tls/valkey-ec.key" [pwd]]
+
+            try {
+                # OpenSSL puts a key in the slot for its own algorithm and only checks it
+                # against the certificate already there, so a mismatched pair can leave a
+                # certificate loaded with no key instead of failing.
+                catch {r CONFIG SET tls-cert-file $ec_crt tls-key-file $rsa_key \
+                                    tls-alt-cert-file $rsa_crt tls-alt-key-file $rsa_key} e
+                assert_match {*Unable to update TLS configuration*} $e
+                verify_log_message 0 "*TLS certificate does not match its private key*" 0
+
+                # Same the other way round: the alternate certificate left without a key.
+                catch {r CONFIG SET tls-cert-file $ec_crt tls-key-file $ec_key \
+                                    tls-alt-cert-file $rsa_crt tls-alt-key-file $ec_key} e
+                assert_match {*Unable to update TLS configuration*} $e
+            } finally {
+                r CONFIG SET tls-cert-file $orig_crt tls-key-file $orig_key \
+                             tls-alt-cert-file $orig_alt_crt tls-alt-key-file $orig_alt_key
+            }
+        }
+
         test {TLS: alt cert and key files must be provided together} {
             # backup current certificates
             set orig_server_crt [lindex [r config get tls-cert-file] 1]
