@@ -645,6 +645,9 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         goto error;
     }
 
+    /* INFO reporting only. isCertValid() above already parsed this certificate, so a
+     * failure here is not reachable, and it would leave the field as none rather than
+     * refuse the configuration. */
     if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
 
     if (alt_cert_file) {
@@ -726,6 +729,10 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
     }
 #endif
 
+    /* Loading the alternate certificate moved the current certificate to its slot,
+     * and outgoing TLS 1.2 connections pick their client certificate from there.
+     * Leave it on the lowest slot, which is where it sat before dual certificates. */
+    SSL_CTX_set_current_cert(ctx, SSL_CERT_SET_FIRST);
     return ctx;
 
 error:
