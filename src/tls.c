@@ -398,14 +398,11 @@ static int tlsUpdateCertInfoFromDir(const char *path, long long *expiry, sds *se
     return tlsStoreCertInfo(earliest_expiry, earliest_serial, cert_count, expiry, serial, count);
 }
 
-/* Serial and expiry of the two server certificates, captured while the context is
- * being built, where the file each one came from is still known.
- *
- * OpenSSL keeps one certificate slot per key algorithm, orders the slots by
- * algorithm, and records nothing about the order they were configured in, so which
- * slot came from tls-cert-file cannot be recovered from a finished context. Neither
- * can the key algorithm stand in for the slot: EVP_PKEY_base_id() returns NID_undef
- * for a provider-only algorithm such as ML-DSA, which OpenSSL 3.5 loads happily. */
+/* Serial and expiry of the two server certificates, captured while the context is built
+ * because a finished context cannot tell you which slot came from tls-cert-file: OpenSSL
+ * orders slots by key algorithm and records nothing about configuration order. The key
+ * algorithm cannot stand in for the slot either, since EVP_PKEY_base_id() is NID_undef
+ * for a provider-only algorithm such as ML-DSA. */
 typedef struct {
     long long cert_expiry;
     sds cert_serial;
@@ -606,6 +603,8 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
     const char *alt_key_file_pass = client ? NULL : ctx_config->alt_key_file_pass;
     char errbuf[256];
     SSL_CTX *ctx = NULL;
+    EVP_PKEY *primary_pkey = NULL;
+    EVP_PKEY *alt_pkey = NULL;
     ctx = SSL_CTX_new(SSLv23_method());
     if (!ctx) goto error;
 
@@ -650,13 +649,11 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
     if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
 
     if (alt_cert_file) {
-        EVP_PKEY *primary_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
+        primary_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
         if (!primary_pkey) {
             serverLog(LL_WARNING, "Could not get public key from primary certificate");
             goto error;
         }
-        int primary_alg = EVP_PKEY_base_id(primary_pkey);
-        EVP_PKEY_free(primary_pkey);
 
         if (SSL_CTX_use_certificate_chain_file(ctx, alt_cert_file) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
@@ -669,15 +666,13 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
             goto error;
         }
 
-        EVP_PKEY *alt_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
+        alt_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
         if (!alt_pkey) {
             serverLog(LL_WARNING, "Could not get public key from alternate certificate");
             goto error;
         }
-        int alt_alg = EVP_PKEY_base_id(alt_pkey);
-        EVP_PKEY_free(alt_pkey);
 
-        if (primary_alg == alt_alg) {
+        if (EVP_PKEY_base_id(primary_pkey) == EVP_PKEY_base_id(alt_pkey)) {
             serverLog(LL_WARNING, "Primary and alternate certificates must use different key algorithms");
             goto error;
         }
@@ -689,7 +684,7 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         serverLog(LL_WARNING, "Failed to load private key: %s: %s", key_file, errbuf);
         goto error;
     }
-    if (alt_cert_file) {
+    if (alt_key_file) {
         SSL_CTX_set_default_passwd_cb_userdata(ctx, (void *)alt_key_file_pass);
         if (SSL_CTX_use_PrivateKey_file(ctx, alt_key_file, SSL_FILETYPE_PEM) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
@@ -747,9 +742,13 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
      * and outgoing TLS 1.2 connections pick their client certificate from there.
      * Leave it on the lowest slot, which is where it sat before dual certificates. */
     SSL_CTX_set_current_cert(ctx, SSL_CERT_SET_FIRST);
+    EVP_PKEY_free(primary_pkey);
+    EVP_PKEY_free(alt_pkey);
     return ctx;
 
 error:
+    EVP_PKEY_free(primary_pkey);
+    EVP_PKEY_free(alt_pkey);
     if (ctx) SSL_CTX_free(ctx);
     return NULL;
 }
