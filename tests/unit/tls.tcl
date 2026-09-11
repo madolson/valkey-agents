@@ -235,6 +235,48 @@ start_server {tags {"tls"}} {
             }
         }
 
+        test {TLS: outgoing connections present the tls-cert-file certificate} {
+            set primary [srv 0 client]
+            set primary_host [srv 0 host]
+            set primary_port [srv 0 port]
+
+            set rsa_crt [format "%s/tests/tls/valkey.crt" [pwd]]
+            set rsa_key [format "%s/tests/tls/valkey.key" [pwd]]
+            set ec_crt [format "%s/tests/tls/valkey-ec.crt" [pwd]]
+            set ec_key [format "%s/tests/tls/valkey-ec.key" [pwd]]
+
+            # Authenticate the replica by the CN of the certificate it presents, and give
+            # both candidate CNs an account so a wrong choice reports as itself rather
+            # than just failing to connect. valkey.crt is CN=Generic-cert and
+            # valkey-ec.crt is CN=EC-cert.
+            r ACL SETUSER {Generic-cert} on nopass ~* &* +@all
+            r ACL SETUSER {EC-cert} on nopass ~* &* +@all
+            r CONFIG SET tls-auth-clients-user CN
+            # The certificate cursor only reaches client side selection below TLS 1.3.
+            r CONFIG SET tls-protocols TLSv1.2
+
+            try {
+                start_server [list overrides [list tls-cert-file $rsa_crt tls-key-file $rsa_key \
+                                                  tls-alt-cert-file $ec_crt tls-alt-key-file $ec_key \
+                                                  tls-protocols TLSv1.2] \
+                                   omit [list tls-client-cert-file tls-client-key-file]] {
+                    r replicaof $primary_host $primary_port
+                    wait_for_condition 50 100 {
+                        [string match {*master_link_status:up*} [r info replication]]
+                    } else {
+                        fail "replica could not sync using tls-cert-file as its client cert"
+                    }
+
+                    assert {[regexp {user=(\S+)} [$primary client list type replica] -> replica_user]}
+                    assert_equal "Generic-cert" $replica_user
+                }
+            } finally {
+                r CONFIG SET tls-auth-clients-user off
+                r CONFIG SET tls-protocols ""
+                r ACL DELUSER {Generic-cert} {EC-cert}
+            }
+        }
+
         test {TLS: alt cert and key files must be provided together} {
             # backup current certificates
             set orig_server_crt [lindex [r config get tls-cert-file] 1]

@@ -645,9 +645,8 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         goto error;
     }
 
-    /* INFO reporting only. isCertValid() above already parsed this certificate, so a
-     * failure here is not reachable, and it would leave the field as none rather than
-     * refuse the configuration. */
+    /* INFO reporting only. A failure leaves the field as none rather than refusing the
+     * configuration. */
     if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
 
     if (alt_cert_file) {
