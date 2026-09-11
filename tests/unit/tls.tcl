@@ -154,6 +154,49 @@ start_server {tags {"tls"}} {
             }
         }
 
+        test {TLS: INFO reports each certificate against the config that loaded it} {
+            # backup current certificates
+            set orig_server_crt [lindex [r config get tls-cert-file] 1]
+            set orig_server_key [lindex [r config get tls-key-file] 1]
+            set orig_server_alt_crt [lindex [r config get tls-alt-cert-file] 1]
+            set orig_server_alt_key [lindex [r config get tls-alt-key-file] 1]
+
+            set valkey_crt [format "%s/tests/tls/valkey.crt" [pwd]]
+            set valkey_key [format "%s/tests/tls/valkey.key" [pwd]]
+            set valkey_ec_crt [format "%s/tests/tls/valkey-ec.crt" [pwd]]
+            set valkey_ec_key [format "%s/tests/tls/valkey-ec.key" [pwd]]
+
+            # OpenSSL orders its certificate slots by key algorithm, not by the
+            # order the certificates were configured, so swapping the two configs
+            # must swap the two reported serials.
+            proc server_cert_serials {} {
+                set info [r info tls]
+                if {![regexp {tls_server_cert_serial:([^\r\n]+)} $info -> primary]} {
+                    fail "INFO tls missing tls_server_cert_serial"
+                }
+                if {![regexp {tls_server_alt_cert_serial:([^\r\n]+)} $info -> alt]} {
+                    fail "INFO tls missing tls_server_alt_cert_serial"
+                }
+                return [list $primary $alt]
+            }
+
+            try {
+                r CONFIG SET tls-cert-file $valkey_ec_crt tls-key-file $valkey_ec_key tls-alt-cert-file $valkey_crt tls-alt-key-file $valkey_key
+                lassign [server_cert_serials] ec_as_primary rsa_as_alt
+                assert {$ec_as_primary ne "none"}
+                assert {$rsa_as_alt ne "none"}
+                assert {$ec_as_primary ne $rsa_as_alt}
+
+                r CONFIG SET tls-cert-file $valkey_crt tls-key-file $valkey_key tls-alt-cert-file $valkey_ec_crt tls-alt-key-file $valkey_ec_key
+                lassign [server_cert_serials] rsa_as_primary ec_as_alt
+                assert_equal $rsa_as_alt $rsa_as_primary
+                assert_equal $ec_as_primary $ec_as_alt
+            } finally {
+                #cleanup
+                r CONFIG SET tls-cert-file $orig_server_crt tls-key-file $orig_server_key tls-alt-cert-file $orig_server_alt_crt tls-alt-key-file $orig_server_alt_key
+            }
+        }
+
         test {TLS: alt cert and key files must be provided together} {
             # backup current certificates
             set orig_server_crt [lindex [r config get tls-cert-file] 1]

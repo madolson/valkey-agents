@@ -398,22 +398,72 @@ static int tlsUpdateCertInfoFromDir(const char *path, long long *expiry, sds *se
     return tlsStoreCertInfo(earliest_expiry, earliest_serial, cert_count, expiry, serial, count);
 }
 
+/* Key algorithm of the leaf certificate in 'path', or NID_undef if it can't be read. */
+static int tlsCertFileKeyAlgorithm(const char *path) {
+    if (!path) return NID_undef;
+    FILE *fp = fopen(path, "r");
+    if (!fp) return NID_undef;
+    X509 *cert = PEM_read_X509(fp, NULL, NULL, NULL);
+    fclose(fp);
+    if (!cert) return NID_undef;
+    int alg = NID_undef;
+    EVP_PKEY *pkey = X509_get_pubkey(cert);
+    if (pkey) {
+        alg = EVP_PKEY_base_id(pkey);
+        EVP_PKEY_free(pkey);
+    }
+    X509_free(cert);
+    return alg;
+}
+
+/* Point ctx's current certificate at the one whose key algorithm is 'alg'.
+ *
+ * OpenSSL keeps one certificate slot per key algorithm and orders the slots by
+ * algorithm, so SSL_CERT_SET_FIRST selects the lowest-numbered algorithm rather
+ * than the certificate configured first. That makes the cursor position useless
+ * for telling tls-cert-file from tls-alt-cert-file. The two are required to use
+ * different key algorithms, so the algorithm identifies the slot. */
+static int tlsSelectCertByKeyAlgorithm(SSL_CTX *ctx, int alg) {
+    if (!ctx || alg == NID_undef) return C_ERR;
+    for (int op = SSL_CERT_SET_FIRST;; op = SSL_CERT_SET_NEXT) {
+        if (SSL_CTX_set_current_cert(ctx, op) != 1) return C_ERR;
+        EVP_PKEY *pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
+        if (!pkey) continue;
+        int slot_alg = EVP_PKEY_base_id(pkey);
+        EVP_PKEY_free(pkey);
+        if (slot_alg == alg) return C_OK;
+    }
+}
+
+static void tlsRefreshCertInfoForFile(const char *cert_file, long long *expiry, sds *serial) {
+    if (tlsSelectCertByKeyAlgorithm(valkey_tls_ctx, tlsCertFileKeyAlgorithm(cert_file)) == C_ERR ||
+        tlsUpdateCertInfoFromCtx(valkey_tls_ctx, expiry, serial) == C_ERR) {
+        tlsClearCertInfo(expiry, serial);
+    }
+}
+
 static void tlsRefreshServerCertInfo(void) {
-    /* Cycle through both certificates to get the correct info for each */
-    if (!(server.tls_port || server.tls_replication || server.tls_cluster) || !valkey_tls_ctx ||
-        SSL_CTX_set_current_cert(valkey_tls_ctx, SSL_CERT_SET_FIRST) != 1 ||
-        tlsUpdateCertInfoFromCtx(valkey_tls_ctx, &server.tls_server_cert_expire_time, &server.tls_server_cert_serial) == C_ERR) {
-        tlsClearCertInfo(&server.tls_server_cert_expire_time, &server.tls_server_cert_serial);
-    }
-    if (SSL_CTX_set_current_cert(valkey_tls_ctx, SSL_CERT_SET_NEXT) != 1 ||
-        tlsUpdateCertInfoFromCtx(valkey_tls_ctx, &server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial) == C_ERR) {
-        tlsClearCertInfo(&server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial);
-    }
-    if (SSL_CTX_set_current_cert(valkey_tls_ctx, SSL_CERT_SET_FIRST) != 1) {
-        serverLog(LL_WARNING, "Certificate unset during refresh, clearing all server certificate info");
+    if (!(server.tls_port || server.tls_replication || server.tls_cluster) || !valkey_tls_ctx) {
         tlsClearCertInfo(&server.tls_server_cert_expire_time, &server.tls_server_cert_serial);
         tlsClearCertInfo(&server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial);
+        return;
     }
+
+    if (!server.tls_ctx_config.alt_cert_file) {
+        /* Only one certificate is loaded, so the cursor is unambiguous. */
+        if (SSL_CTX_set_current_cert(valkey_tls_ctx, SSL_CERT_SET_FIRST) != 1 ||
+            tlsUpdateCertInfoFromCtx(valkey_tls_ctx, &server.tls_server_cert_expire_time, &server.tls_server_cert_serial) == C_ERR) {
+            tlsClearCertInfo(&server.tls_server_cert_expire_time, &server.tls_server_cert_serial);
+        }
+        tlsClearCertInfo(&server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial);
+        return;
+    }
+
+    tlsRefreshCertInfoForFile(server.tls_ctx_config.cert_file, &server.tls_server_cert_expire_time,
+                              &server.tls_server_cert_serial);
+    tlsRefreshCertInfoForFile(server.tls_ctx_config.alt_cert_file, &server.tls_server_alt_cert_expire_time,
+                              &server.tls_server_alt_cert_serial);
+    SSL_CTX_set_current_cert(valkey_tls_ctx, SSL_CERT_SET_FIRST);
 }
 
 static void tlsRefreshClientCertInfo(void) {
