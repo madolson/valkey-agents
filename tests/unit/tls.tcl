@@ -235,7 +235,7 @@ start_server {tags {"tls"}} {
             }
         }
 
-        test {TLS: outgoing connections present the tls-cert-file certificate} {
+        test {TLS: a TLS 1.2 outgoing connection presents the tls-cert-file certificate} {
             set primary [srv 0 client]
             set primary_host [srv 0 host]
             set primary_port [srv 0 port]
@@ -252,10 +252,10 @@ start_server {tags {"tls"}} {
             r ACL SETUSER {Generic-cert} on nopass ~* &* +@all
             r ACL SETUSER {EC-cert} on nopass ~* &* +@all
             r CONFIG SET tls-auth-clients-user CN
-            # The certificate cursor only reaches client side selection below TLS 1.3.
-            r CONFIG SET tls-protocols TLSv1.2
 
             try {
+                # A TLS 1.3 client picks by the peer's signature algorithm preference and
+                # ignores the certificate cursor, so pin the replica to 1.2.
                 start_server [list overrides [list tls-cert-file $rsa_crt tls-key-file $rsa_key \
                                                   tls-alt-cert-file $ec_crt tls-alt-key-file $ec_key \
                                                   tls-protocols TLSv1.2] \
@@ -272,7 +272,6 @@ start_server {tags {"tls"}} {
                 }
             } finally {
                 r CONFIG SET tls-auth-clients-user off
-                r CONFIG SET tls-protocols ""
                 r ACL DELUSER {Generic-cert} {EC-cert}
             }
         }
