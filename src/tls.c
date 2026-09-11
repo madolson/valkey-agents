@@ -398,48 +398,45 @@ static int tlsUpdateCertInfoFromDir(const char *path, long long *expiry, sds *se
     return tlsStoreCertInfo(earliest_expiry, earliest_serial, cert_count, expiry, serial, count);
 }
 
-/* Key algorithm of the leaf certificate in 'path', or NID_undef if it can't be read. */
+/* Key algorithm of a certificate as an EVP_PKEY base id, or NID_undef. */
+static int tlsCertKeyAlgorithm(X509 *cert) {
+    if (!cert) return NID_undef;
+    EVP_PKEY *pkey = X509_get_pubkey(cert);
+    if (!pkey) return NID_undef;
+    int alg = EVP_PKEY_base_id(pkey);
+    EVP_PKEY_free(pkey);
+    return alg;
+}
+
+/* Same, for the leaf certificate in a PEM file. NID_undef if it can't be read. */
 static int tlsCertFileKeyAlgorithm(const char *path) {
     if (!path) return NID_undef;
     FILE *fp = fopen(path, "r");
     if (!fp) return NID_undef;
     X509 *cert = PEM_read_X509(fp, NULL, NULL, NULL);
     fclose(fp);
-    if (!cert) return NID_undef;
-    int alg = NID_undef;
-    EVP_PKEY *pkey = X509_get_pubkey(cert);
-    if (pkey) {
-        alg = EVP_PKEY_base_id(pkey);
-        EVP_PKEY_free(pkey);
-    }
+    int alg = tlsCertKeyAlgorithm(cert);
     X509_free(cert);
     return alg;
 }
 
-/* Point ctx's current certificate at the one whose key algorithm is 'alg'.
+/* Report the certificate that 'cert_file' configured.
  *
  * OpenSSL keeps one certificate slot per key algorithm and orders the slots by
  * algorithm, so SSL_CERT_SET_FIRST selects the lowest-numbered algorithm rather
- * than the certificate configured first. That makes the cursor position useless
- * for telling tls-cert-file from tls-alt-cert-file. The two are required to use
- * different key algorithms, so the algorithm identifies the slot. */
-static int tlsSelectCertByKeyAlgorithm(SSL_CTX *ctx, int alg) {
-    if (!ctx || alg == NID_undef) return C_ERR;
-    for (int op = SSL_CERT_SET_FIRST;; op = SSL_CERT_SET_NEXT) {
-        if (SSL_CTX_set_current_cert(ctx, op) != 1) return C_ERR;
-        EVP_PKEY *pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
-        if (!pkey) continue;
-        int slot_alg = EVP_PKEY_base_id(pkey);
-        EVP_PKEY_free(pkey);
-        if (slot_alg == alg) return C_OK;
-    }
-}
-
+ * than the certificate configured first, and the cursor cannot tell tls-cert-file
+ * from tls-alt-cert-file. The two must use different key algorithms, so the
+ * algorithm identifies the slot. */
 static void tlsRefreshCertInfoForFile(const char *cert_file, long long *expiry, sds *serial) {
-    if (tlsSelectCertByKeyAlgorithm(valkey_tls_ctx, tlsCertFileKeyAlgorithm(cert_file)) == C_ERR ||
-        tlsUpdateCertInfoFromCtx(valkey_tls_ctx, expiry, serial) == C_ERR) {
-        tlsClearCertInfo(expiry, serial);
+    int alg = tlsCertFileKeyAlgorithm(cert_file);
+    if (alg != NID_undef) {
+        for (int op = SSL_CERT_SET_FIRST; SSL_CTX_set_current_cert(valkey_tls_ctx, op) == 1; op = SSL_CERT_SET_NEXT) {
+            if (tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(valkey_tls_ctx)) != alg) continue;
+            if (tlsUpdateCertInfoFromCtx(valkey_tls_ctx, expiry, serial) == C_OK) return;
+            break;
+        }
     }
+    tlsClearCertInfo(expiry, serial);
 }
 
 static void tlsRefreshServerCertInfo(void) {
@@ -448,21 +445,13 @@ static void tlsRefreshServerCertInfo(void) {
         tlsClearCertInfo(&server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial);
         return;
     }
-
-    if (!server.tls_ctx_config.alt_cert_file) {
-        /* Only one certificate is loaded, so the cursor is unambiguous. */
-        if (SSL_CTX_set_current_cert(valkey_tls_ctx, SSL_CERT_SET_FIRST) != 1 ||
-            tlsUpdateCertInfoFromCtx(valkey_tls_ctx, &server.tls_server_cert_expire_time, &server.tls_server_cert_serial) == C_ERR) {
-            tlsClearCertInfo(&server.tls_server_cert_expire_time, &server.tls_server_cert_serial);
-        }
-        tlsClearCertInfo(&server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial);
-        return;
-    }
-
     tlsRefreshCertInfoForFile(server.tls_ctx_config.cert_file, &server.tls_server_cert_expire_time,
                               &server.tls_server_cert_serial);
     tlsRefreshCertInfoForFile(server.tls_ctx_config.alt_cert_file, &server.tls_server_alt_cert_expire_time,
                               &server.tls_server_alt_cert_serial);
+    /* valkey_tls_ctx is also the client context when tls-client-cert-file is unset,
+     * and client side certificate selection does read the cursor, so don't leave it
+     * wherever the lookups landed. */
     SSL_CTX_set_current_cert(valkey_tls_ctx, SSL_CERT_SET_FIRST);
 }
 
@@ -631,8 +620,6 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
     const char *alt_key_file_pass = client ? NULL : ctx_config->alt_key_file_pass;
     char errbuf[256];
     SSL_CTX *ctx = NULL;
-    EVP_PKEY *primary_pkey = NULL;
-    EVP_PKEY *alt_pkey = NULL;
     ctx = SSL_CTX_new(SSLv23_method());
     if (!ctx) goto error;
 
@@ -673,8 +660,8 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
     }
 
     if (alt_cert_file) {
-        primary_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
-        if (!primary_pkey) {
+        int primary_alg = tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx));
+        if (primary_alg == NID_undef) {
             serverLog(LL_WARNING, "Could not get public key from primary certificate");
             goto error;
         }
@@ -690,13 +677,13 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
             goto error;
         }
 
-        alt_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
-        if (!alt_pkey) {
+        int alt_alg = tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx));
+        if (alt_alg == NID_undef) {
             serverLog(LL_WARNING, "Could not get public key from alternate certificate");
             goto error;
         }
 
-        if (EVP_PKEY_base_id(primary_pkey) == EVP_PKEY_base_id(alt_pkey)) {
+        if (primary_alg == alt_alg) {
             serverLog(LL_WARNING, "Primary and alternate certificates must use different key algorithms");
             goto error;
         }
@@ -746,13 +733,9 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
     }
 #endif
 
-    EVP_PKEY_free(primary_pkey);
-    EVP_PKEY_free(alt_pkey);
     return ctx;
 
 error:
-    EVP_PKEY_free(primary_pkey);
-    EVP_PKEY_free(alt_pkey);
     if (ctx) SSL_CTX_free(ctx);
     return NULL;
 }
