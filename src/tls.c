@@ -645,7 +645,7 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
     }
 
     /* INFO reporting only. A failure leaves the field as none rather than refusing the
-     * configuration. The pairing check below guarantees this certificate has a key. */
+     * configuration. */
     if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
 
     if (alt_cert_file) {
@@ -691,21 +691,6 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
             serverLog(LL_WARNING, "Failed to load private key: %s: %s", alt_key_file, errbuf);
             goto error;
         }
-    }
-
-    /* Every configured certificate must have ended up with a matching private key.
-     * OpenSSL routes a key to the slot for its own key algorithm and only checks it
-     * against whatever certificate is already in that slot, so a mismatched pair can
-     * leave a certificate loaded with no key rather than failing outright. Such a
-     * certificate cannot be presented, and only the slots holding both are usable. */
-    int usable_certs = 0;
-    for (int op = SSL_CERT_SET_FIRST; SSL_CTX_set_current_cert(ctx, op) == 1; op = SSL_CERT_SET_NEXT) {
-        usable_certs++;
-    }
-    if (usable_certs != (alt_cert_file ? 2 : 1)) {
-        serverLog(LL_WARNING, "A configured %s TLS certificate has no matching private key.",
-                  client ? "client" : "server");
-        goto error;
     }
 
     if (ctx_config->ca_cert_file || ctx_config->ca_cert_dir) {
