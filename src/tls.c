@@ -415,7 +415,7 @@ typedef struct {
 
 static tlsServerCertInfo active_cert_info = {0};
 
-static void tlsFreeServerCertInfo(tlsServerCertInfo *info) {
+static void tlsClearServerCertInfo(tlsServerCertInfo *info) {
     tlsClearCertSerial(&info->cert_serial);
     tlsClearCertSerial(&info->alt_cert_serial);
     info->cert_expiry = 0;
@@ -645,19 +645,29 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         goto error;
     }
 
-    /* INFO reporting only. A failure leaves the field as none rather than refusing the
-     * configuration. */
-    if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
-
+    int primary_alg = NID_undef;
     if (alt_cert_file) {
         EVP_PKEY *primary_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
         if (!primary_pkey) {
             serverLog(LL_WARNING, "Could not get public key from primary certificate");
             goto error;
         }
-        int primary_alg = EVP_PKEY_base_id(primary_pkey);
+        primary_alg = EVP_PKEY_base_id(primary_pkey);
         EVP_PKEY_free(primary_pkey);
+    }
 
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
+        serverLog(LL_WARNING, "Failed to load private key: %s: %s", key_file, errbuf);
+        goto error;
+    }
+
+    /* Record the certificate the key just activated, which is the one the server can
+     * actually present. INFO reporting only: a failure leaves the field as none rather
+     * than refusing the configuration. */
+    if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
+
+    if (alt_cert_file) {
         if (SSL_CTX_use_certificate_chain_file(ctx, alt_cert_file) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
             serverLog(LL_WARNING, "Failed to load certificate: %s: %s", alt_cert_file, errbuf);
@@ -681,21 +691,14 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
             serverLog(LL_WARNING, "Primary and alternate certificates must use different key algorithms");
             goto error;
         }
-        if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->alt_cert_expiry, &out_info->alt_cert_serial);
-    }
 
-    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
-        ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
-        serverLog(LL_WARNING, "Failed to load private key: %s: %s", key_file, errbuf);
-        goto error;
-    }
-    if (alt_key_file) {
         SSL_CTX_set_default_passwd_cb_userdata(ctx, (void *)alt_key_file_pass);
         if (SSL_CTX_use_PrivateKey_file(ctx, alt_key_file, SSL_FILETYPE_PEM) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
             serverLog(LL_WARNING, "Failed to load private key: %s: %s", alt_key_file, errbuf);
             goto error;
         }
+        if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->alt_cert_expiry, &out_info->alt_cert_serial);
     }
 
     if (ctx_config->ca_cert_file || ctx_config->ca_cert_dir) {
@@ -873,6 +876,7 @@ static int tlsCreateContexts(serverTLSContextConfig *ctx_config,
     return C_OK;
 
 error:
+    if (out_info) tlsClearServerCertInfo(out_info);
     if (ctx) SSL_CTX_free(ctx);
     if (client_ctx) SSL_CTX_free(client_ctx);
     *out_ctx = NULL;
@@ -1045,7 +1049,6 @@ static int tlsConfigure(void *priv, int reconfigure, bool background) {
         tlsServerCertInfo cert_info = {0};
         if (tlsCreateContexts(ctx_config, &ctx, &client_ctx, &cert_info) == C_ERR) {
             serverLog(LL_WARNING, "Background TLS reload failed");
-            tlsFreeServerCertInfo(&cert_info);
             return C_ERR;
         }
 
@@ -1053,7 +1056,7 @@ static int tlsConfigure(void *priv, int reconfigure, bool background) {
         if (pending_reload.ctx) {
             SSL_CTX_free(pending_reload.ctx);
             SSL_CTX_free(pending_reload.client_ctx);
-            tlsFreeServerCertInfo(&pending_reload.cert_info);
+            tlsClearServerCertInfo(&pending_reload.cert_info);
             serverLog(LL_DEBUG, "Replacing previous pending TLS reload");
         }
         pending_reload.ctx = ctx;
@@ -1066,7 +1069,6 @@ static int tlsConfigure(void *priv, int reconfigure, bool background) {
     } else {
         tlsServerCertInfo cert_info = {0};
         if (tlsCreateContexts(ctx_config, &ctx, &client_ctx, &cert_info) == C_ERR) {
-            tlsFreeServerCertInfo(&cert_info);
             return C_ERR;
         }
 
@@ -1074,7 +1076,7 @@ static int tlsConfigure(void *priv, int reconfigure, bool background) {
         SSL_CTX_free(valkey_tls_client_ctx);
         valkey_tls_ctx = ctx;
         valkey_tls_client_ctx = client_ctx;
-        tlsFreeServerCertInfo(&active_cert_info);
+        tlsClearServerCertInfo(&active_cert_info);
         active_cert_info = cert_info;
         captureMetadata(ctx_config, &active_metadata);
         tlsRefreshAllCertInfo();
@@ -1111,7 +1113,7 @@ void tlsApplyPendingReload(void) {
     if (!metadataChanged(&active_metadata, &pending_reload.metadata)) {
         SSL_CTX_free(pending_reload.ctx);
         SSL_CTX_free(pending_reload.client_ctx);
-        tlsFreeServerCertInfo(&pending_reload.cert_info);
+        tlsClearServerCertInfo(&pending_reload.cert_info);
         memset(&pending_reload, 0, sizeof(pending_reload));
         pthread_mutex_unlock(&pending_reload_mutex);
         serverLog(LL_DEBUG, "Discarding pending TLS reload with unchanged materials");
@@ -1129,7 +1131,7 @@ void tlsApplyPendingReload(void) {
     valkey_tls_client_ctx = local_pending.client_ctx;
 
     active_metadata = local_pending.metadata;
-    tlsFreeServerCertInfo(&active_cert_info);
+    tlsClearServerCertInfo(&active_cert_info);
     active_cert_info = local_pending.cert_info;
 
     SSL_CTX_free(old_ctx);
