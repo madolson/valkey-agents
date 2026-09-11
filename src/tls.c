@@ -398,46 +398,35 @@ static int tlsUpdateCertInfoFromDir(const char *path, long long *expiry, sds *se
     return tlsStoreCertInfo(earliest_expiry, earliest_serial, cert_count, expiry, serial, count);
 }
 
-/* Key algorithms of the certificates loaded into valkey_tls_ctx. OpenSSL orders
- * its certificate slots by key algorithm and keeps no record of the order they
- * were configured in, so this is what maps a slot back to the config that loaded
- * it. Captured when the context is built and swapped in with it. */
-typedef struct {
-    int cert_alg;     /* tls-cert-file */
-    int alt_cert_alg; /* tls-alt-cert-file, NID_undef when unconfigured */
-} tlsCertAlgs;
-
-static tlsCertAlgs active_cert_algs = {NID_undef, NID_undef};
-
-/* Key algorithm of a certificate as an EVP_PKEY base id, or NID_undef. */
-static int tlsCertKeyAlgorithm(X509 *cert) {
-    if (!cert) return NID_undef;
-    EVP_PKEY *pkey = X509_get_pubkey(cert);
-    if (!pkey) return NID_undef;
-    int alg = EVP_PKEY_base_id(pkey);
-    EVP_PKEY_free(pkey);
-    return alg;
-}
-
-/* Point valkey_tls_ctx's current certificate at the slot holding key algorithm 'alg'.
+/* Serial and expiry of the two server certificates, captured while the context is
+ * being built, where the file each one came from is still known.
  *
- * SSL_CERT_SET_FIRST selects the lowest-numbered key algorithm rather than the
- * certificate configured first, so the cursor on its own cannot tell tls-cert-file
- * from tls-alt-cert-file. The two must use different key algorithms, so the
- * algorithm recorded at load time identifies the slot. */
-static int tlsSelectCertByAlg(int alg) {
-    if (alg == NID_undef) return C_ERR;
-    for (int op = SSL_CERT_SET_FIRST; SSL_CTX_set_current_cert(valkey_tls_ctx, op) == 1; op = SSL_CERT_SET_NEXT) {
-        if (tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(valkey_tls_ctx)) == alg) return C_OK;
-    }
-    return C_ERR;
+ * OpenSSL keeps one certificate slot per key algorithm, orders the slots by
+ * algorithm, and records nothing about the order they were configured in, so which
+ * slot came from tls-cert-file cannot be recovered from a finished context. Neither
+ * can the key algorithm stand in for the slot: EVP_PKEY_base_id() returns NID_undef
+ * for a provider-only algorithm such as ML-DSA, which OpenSSL 3.5 loads happily. */
+typedef struct {
+    long long cert_expiry;
+    sds cert_serial;
+    long long alt_cert_expiry;
+    sds alt_cert_serial;
+} tlsServerCertInfo;
+
+static tlsServerCertInfo active_cert_info = {0};
+
+static void tlsFreeServerCertInfo(tlsServerCertInfo *info) {
+    tlsClearCertSerial(&info->cert_serial);
+    tlsClearCertSerial(&info->alt_cert_serial);
+    info->cert_expiry = 0;
+    info->alt_cert_expiry = 0;
 }
 
-static void tlsRefreshCertInfoForAlg(int alg, long long *expiry, sds *serial) {
-    if (tlsSelectCertByAlg(alg) == C_ERR ||
-        tlsUpdateCertInfoFromCtx(valkey_tls_ctx, expiry, serial) == C_ERR) {
-        tlsClearCertInfo(expiry, serial);
-    }
+static void tlsPublishCertInfo(long long src_expiry, sds src_serial, long long *expiry, sds *serial) {
+    tlsClearCertInfo(expiry, serial);
+    if (!src_serial) return;
+    *expiry = src_expiry;
+    *serial = sdsdup(src_serial);
 }
 
 static void tlsRefreshServerCertInfo(void) {
@@ -446,14 +435,10 @@ static void tlsRefreshServerCertInfo(void) {
         tlsClearCertInfo(&server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial);
         return;
     }
-    tlsRefreshCertInfoForAlg(active_cert_algs.cert_alg, &server.tls_server_cert_expire_time,
-                             &server.tls_server_cert_serial);
-    tlsRefreshCertInfoForAlg(active_cert_algs.alt_cert_alg, &server.tls_server_alt_cert_expire_time,
-                             &server.tls_server_alt_cert_serial);
-    /* valkey_tls_ctx is also the client context when tls-client-cert-file is unset,
-     * and a TLS 1.2 client picks its certificate from the cursor, so leave it on the
-     * one tls-cert-file configured rather than wherever the lookups landed. */
-    tlsSelectCertByAlg(active_cert_algs.cert_alg);
+    tlsPublishCertInfo(active_cert_info.cert_expiry, active_cert_info.cert_serial,
+                       &server.tls_server_cert_expire_time, &server.tls_server_cert_serial);
+    tlsPublishCertInfo(active_cert_info.alt_cert_expiry, active_cert_info.alt_cert_serial,
+                       &server.tls_server_alt_cert_expire_time, &server.tls_server_alt_cert_serial);
 }
 
 static void tlsRefreshClientCertInfo(void) {
@@ -611,7 +596,7 @@ static bool areAllCaCertsValid(SSL_CTX *ctx) {
 /* Create a *base* SSL_CTX using the SSL configuration provided. The base context
  * includes everything that's common for both client-side and server-side connections.
  */
-static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protocols, int client, tlsCertAlgs *out_algs) {
+static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protocols, int client, tlsServerCertInfo *out_info) {
     const char *cert_file = client ? ctx_config->client_cert_file : ctx_config->cert_file;
     const char *key_file = client ? ctx_config->client_key_file : ctx_config->key_file;
     const char *key_file_pass = client ? ctx_config->client_key_file_pass : ctx_config->key_file_pass;
@@ -660,13 +645,17 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         goto error;
     }
 
-    /* SSL_CTX_use_certificate_chain_file only succeeds for a certificate whose public
-     * key resolves to one of OpenSSL's key algorithm slots, so this cannot be
-     * NID_undef here. */
-    int primary_alg = tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx));
-    if (out_algs) out_algs->cert_alg = primary_alg;
+    if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->cert_expiry, &out_info->cert_serial);
 
     if (alt_cert_file) {
+        EVP_PKEY *primary_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
+        if (!primary_pkey) {
+            serverLog(LL_WARNING, "Could not get public key from primary certificate");
+            goto error;
+        }
+        int primary_alg = EVP_PKEY_base_id(primary_pkey);
+        EVP_PKEY_free(primary_pkey);
+
         if (SSL_CTX_use_certificate_chain_file(ctx, alt_cert_file) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
             serverLog(LL_WARNING, "Failed to load certificate: %s: %s", alt_cert_file, errbuf);
@@ -678,12 +667,19 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
             goto error;
         }
 
-        int alt_alg = tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx));
+        EVP_PKEY *alt_pkey = X509_get_pubkey(SSL_CTX_get0_certificate(ctx));
+        if (!alt_pkey) {
+            serverLog(LL_WARNING, "Could not get public key from alternate certificate");
+            goto error;
+        }
+        int alt_alg = EVP_PKEY_base_id(alt_pkey);
+        EVP_PKEY_free(alt_pkey);
+
         if (primary_alg == alt_alg) {
             serverLog(LL_WARNING, "Primary and alternate certificates must use different key algorithms");
             goto error;
         }
-        if (out_algs) out_algs->alt_cert_alg = alt_alg;
+        if (out_info) tlsUpdateCertInfoFromCtx(ctx, &out_info->alt_cert_expiry, &out_info->alt_cert_serial);
     }
 
     if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
@@ -745,7 +741,7 @@ error:
 static int tlsCreateContexts(serverTLSContextConfig *ctx_config,
                              SSL_CTX **out_ctx,
                              SSL_CTX **out_client_ctx,
-                             tlsCertAlgs *out_algs) {
+                             tlsServerCertInfo *out_info) {
     char errbuf[256];
     SSL_CTX *ctx = NULL;
     SSL_CTX *client_ctx = NULL;
@@ -781,7 +777,7 @@ static int tlsCreateContexts(serverTLSContextConfig *ctx_config,
     if (protocols == -1) goto error;
 
     /* Create server side/general context */
-    ctx = createSSLContext(ctx_config, protocols, 0, out_algs);
+    ctx = createSSLContext(ctx_config, protocols, 0, out_info);
     if (!ctx) goto error;
 
     if (ctx_config->session_caching) {
@@ -902,7 +898,7 @@ typedef struct {
     SSL_CTX *ctx;
     SSL_CTX *client_ctx;
     tlsMaterialsMetadata metadata;
-    tlsCertAlgs cert_algs;
+    tlsServerCertInfo cert_info;
 } tlsPendingReload;
 
 /* Last known (active) TLS materials metadata */
@@ -1040,9 +1036,10 @@ static int tlsConfigure(void *priv, int reconfigure, bool background) {
         }
         serverLog(LL_NOTICE, "TLS materials changed, reloading in background");
 
-        tlsCertAlgs cert_algs = {NID_undef, NID_undef};
-        if (tlsCreateContexts(ctx_config, &ctx, &client_ctx, &cert_algs) == C_ERR) {
+        tlsServerCertInfo cert_info = {0};
+        if (tlsCreateContexts(ctx_config, &ctx, &client_ctx, &cert_info) == C_ERR) {
             serverLog(LL_WARNING, "Background TLS reload failed");
+            tlsFreeServerCertInfo(&cert_info);
             return C_ERR;
         }
 
@@ -1050,18 +1047,20 @@ static int tlsConfigure(void *priv, int reconfigure, bool background) {
         if (pending_reload.ctx) {
             SSL_CTX_free(pending_reload.ctx);
             SSL_CTX_free(pending_reload.client_ctx);
+            tlsFreeServerCertInfo(&pending_reload.cert_info);
             serverLog(LL_DEBUG, "Replacing previous pending TLS reload");
         }
         pending_reload.ctx = ctx;
         pending_reload.client_ctx = client_ctx;
         pending_reload.metadata = new_metadata;
-        pending_reload.cert_algs = cert_algs;
+        pending_reload.cert_info = cert_info;
         pthread_mutex_unlock(&pending_reload_mutex);
 
         serverLog(LL_DEBUG, "Background TLS reload parsed TLS materials successfully");
     } else {
-        tlsCertAlgs cert_algs = {NID_undef, NID_undef};
-        if (tlsCreateContexts(ctx_config, &ctx, &client_ctx, &cert_algs) == C_ERR) {
+        tlsServerCertInfo cert_info = {0};
+        if (tlsCreateContexts(ctx_config, &ctx, &client_ctx, &cert_info) == C_ERR) {
+            tlsFreeServerCertInfo(&cert_info);
             return C_ERR;
         }
 
@@ -1069,7 +1068,8 @@ static int tlsConfigure(void *priv, int reconfigure, bool background) {
         SSL_CTX_free(valkey_tls_client_ctx);
         valkey_tls_ctx = ctx;
         valkey_tls_client_ctx = client_ctx;
-        active_cert_algs = cert_algs;
+        tlsFreeServerCertInfo(&active_cert_info);
+        active_cert_info = cert_info;
         captureMetadata(ctx_config, &active_metadata);
         tlsRefreshAllCertInfo();
     }
@@ -1105,6 +1105,7 @@ void tlsApplyPendingReload(void) {
     if (!metadataChanged(&active_metadata, &pending_reload.metadata)) {
         SSL_CTX_free(pending_reload.ctx);
         SSL_CTX_free(pending_reload.client_ctx);
+        tlsFreeServerCertInfo(&pending_reload.cert_info);
         memset(&pending_reload, 0, sizeof(pending_reload));
         pthread_mutex_unlock(&pending_reload_mutex);
         serverLog(LL_DEBUG, "Discarding pending TLS reload with unchanged materials");
@@ -1122,7 +1123,8 @@ void tlsApplyPendingReload(void) {
     valkey_tls_client_ctx = local_pending.client_ctx;
 
     active_metadata = local_pending.metadata;
-    active_cert_algs = local_pending.cert_algs;
+    tlsFreeServerCertInfo(&active_cert_info);
+    active_cert_info = local_pending.cert_info;
 
     SSL_CTX_free(old_ctx);
     SSL_CTX_free(old_client_ctx);
