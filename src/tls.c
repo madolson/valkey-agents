@@ -186,17 +186,6 @@ static void tlsInit(void) {
     pending_list = listCreate();
 }
 
-/* Key algorithms of the certificates loaded into valkey_tls_ctx. OpenSSL orders
- * its certificate slots by key algorithm and keeps no record of the order they
- * were configured in, so this is what maps a slot back to the config that loaded
- * it. Captured when the context is built and swapped in with it. */
-typedef struct {
-    int cert_alg;     /* tls-cert-file */
-    int alt_cert_alg; /* tls-alt-cert-file, NID_undef when unconfigured */
-} tlsCertAlgs;
-
-static tlsCertAlgs active_cert_algs = {NID_undef, NID_undef};
-
 static void tlsClearCertInfo(long long *expiry, sds *serial);
 static void tlsClearCACertInfo(void);
 static void tlsClearAllCertInfo(void);
@@ -409,6 +398,17 @@ static int tlsUpdateCertInfoFromDir(const char *path, long long *expiry, sds *se
     return tlsStoreCertInfo(earliest_expiry, earliest_serial, cert_count, expiry, serial, count);
 }
 
+/* Key algorithms of the certificates loaded into valkey_tls_ctx. OpenSSL orders
+ * its certificate slots by key algorithm and keeps no record of the order they
+ * were configured in, so this is what maps a slot back to the config that loaded
+ * it. Captured when the context is built and swapped in with it. */
+typedef struct {
+    int cert_alg;     /* tls-cert-file */
+    int alt_cert_alg; /* tls-alt-cert-file, NID_undef when unconfigured */
+} tlsCertAlgs;
+
+static tlsCertAlgs active_cert_algs = {NID_undef, NID_undef};
+
 /* Key algorithm of a certificate as an EVP_PKEY base id, or NID_undef. */
 static int tlsCertKeyAlgorithm(X509 *cert) {
     if (!cert) return NID_undef;
@@ -425,16 +425,16 @@ static int tlsCertKeyAlgorithm(X509 *cert) {
  * certificate configured first, so the cursor on its own cannot tell tls-cert-file
  * from tls-alt-cert-file. The two must use different key algorithms, so the
  * algorithm recorded at load time identifies the slot. */
-static int tlsSelectCertByAlg(SSL_CTX *ctx, int alg) {
+static int tlsSelectCertByAlg(int alg) {
     if (alg == NID_undef) return C_ERR;
-    for (int op = SSL_CERT_SET_FIRST; SSL_CTX_set_current_cert(ctx, op) == 1; op = SSL_CERT_SET_NEXT) {
-        if (tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx)) == alg) return C_OK;
+    for (int op = SSL_CERT_SET_FIRST; SSL_CTX_set_current_cert(valkey_tls_ctx, op) == 1; op = SSL_CERT_SET_NEXT) {
+        if (tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(valkey_tls_ctx)) == alg) return C_OK;
     }
     return C_ERR;
 }
 
 static void tlsRefreshCertInfoForAlg(int alg, long long *expiry, sds *serial) {
-    if (tlsSelectCertByAlg(valkey_tls_ctx, alg) == C_ERR ||
+    if (tlsSelectCertByAlg(alg) == C_ERR ||
         tlsUpdateCertInfoFromCtx(valkey_tls_ctx, expiry, serial) == C_ERR) {
         tlsClearCertInfo(expiry, serial);
     }
@@ -453,7 +453,7 @@ static void tlsRefreshServerCertInfo(void) {
     /* valkey_tls_ctx is also the client context when tls-client-cert-file is unset,
      * and a TLS 1.2 client picks its certificate from the cursor, so leave it on the
      * one tls-cert-file configured rather than wherever the lookups landed. */
-    tlsSelectCertByAlg(valkey_tls_ctx, active_cert_algs.cert_alg);
+    tlsSelectCertByAlg(active_cert_algs.cert_alg);
 }
 
 static void tlsRefreshClientCertInfo(void) {
@@ -662,7 +662,7 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
 
     int primary_alg = tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx));
     if (primary_alg == NID_undef) {
-        serverLog(LL_WARNING, "Could not get public key from %s certificate", client ? "client" : "primary");
+        serverLog(LL_WARNING, "Could not get public key from %s certificate", client ? "client" : "server");
         goto error;
     }
     if (out_algs) out_algs->cert_alg = primary_alg;

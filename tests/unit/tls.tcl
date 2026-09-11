@@ -186,6 +186,40 @@ start_server {tags {"tls"}} {
                 assert_equal $rsa_serial [getInfoProperty $info tls_server_cert_serial]
                 assert_equal $ec_serial [getInfoProperty $info tls_server_alt_cert_serial]
             }
+
+            # The background reload swaps in a context built off the main thread, so it
+            # has to carry its own mapping. Rewrite the two files so the algorithms
+            # trade places, which inverts the mapping if it does not.
+            set tmp_crt "$ec_crt.reload.crt"
+            set tmp_key "$ec_crt.reload.key"
+            set tmp_alt_crt "$ec_crt.reload.alt.crt"
+            set tmp_alt_key "$ec_crt.reload.alt.key"
+            file copy -force $ec_crt $tmp_crt
+            file copy -force $ec_key $tmp_key
+            file copy -force $rsa_crt $tmp_alt_crt
+            file copy -force $rsa_key $tmp_alt_key
+
+            try {
+                start_server [list overrides [list tls-cert-file $tmp_crt tls-key-file $tmp_key \
+                                                  tls-alt-cert-file $tmp_alt_crt tls-alt-key-file $tmp_alt_key \
+                                                  tls-auto-reload-interval 1]] {
+                    set info [r info tls]
+                    assert_equal $ec_serial [getInfoProperty $info tls_server_cert_serial]
+                    assert_equal $rsa_serial [getInfoProperty $info tls_server_alt_cert_serial]
+
+                    file copy -force $rsa_crt $tmp_crt
+                    file copy -force $rsa_key $tmp_key
+                    file copy -force $ec_crt $tmp_alt_crt
+                    file copy -force $ec_key $tmp_alt_key
+                    wait_for_log_messages 0 {"*TLS materials reloaded successfully*"} 0 150 100
+
+                    set info [r info tls]
+                    assert_equal $rsa_serial [getInfoProperty $info tls_server_cert_serial]
+                    assert_equal $ec_serial [getInfoProperty $info tls_server_alt_cert_serial]
+                }
+            } finally {
+                file delete -force $tmp_crt $tmp_key $tmp_alt_crt $tmp_alt_key
+            }
         }
 
         test {TLS: alt cert and key files must be provided together} {
