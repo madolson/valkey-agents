@@ -160,26 +160,32 @@ start_server {tags {"tls"}} {
             set ec_crt [format "%s/tests/tls/valkey-ec.crt" [pwd]]
             set ec_key [format "%s/tests/tls/valkey-ec.key" [pwd]]
 
+            # With one certificate there is nothing to attribute, so this pins which
+            # serial belongs to which file.
+            start_server [list overrides [list tls-cert-file $ec_crt tls-key-file $ec_key]] {
+                set info [r info tls]
+                set ec_serial [getInfoProperty $info tls_server_cert_serial]
+                assert {$ec_serial ni {"" "none"}}
+                assert_equal "none" [getInfoProperty $info tls_server_alt_cert_serial]
+            }
+
             # OpenSSL orders its certificate slots by key algorithm, not by the order
-            # the certificates were configured, so the two orderings must report the
-            # same certificate against the same config.
+            # the certificates were configured, so the EC certificate has to follow the
+            # config it was given to rather than staying on one side.
             start_server [list overrides [list tls-cert-file $ec_crt tls-key-file $ec_key \
                                               tls-alt-cert-file $rsa_crt tls-alt-key-file $rsa_key]] {
                 set info [r info tls]
-                assert {[regexp {tls_server_cert_serial:([^\r\n]+)} $info -> ec_first_primary]}
-                assert {[regexp {tls_server_alt_cert_serial:([^\r\n]+)} $info -> ec_first_alt]}
+                assert_equal $ec_serial [getInfoProperty $info tls_server_cert_serial]
+                set rsa_serial [getInfoProperty $info tls_server_alt_cert_serial]
+                assert {$rsa_serial ne $ec_serial}
             }
 
             start_server [list overrides [list tls-cert-file $rsa_crt tls-key-file $rsa_key \
                                               tls-alt-cert-file $ec_crt tls-alt-key-file $ec_key]] {
                 set info [r info tls]
-                assert {[regexp {tls_server_cert_serial:([^\r\n]+)} $info -> rsa_first_primary]}
-                assert {[regexp {tls_server_alt_cert_serial:([^\r\n]+)} $info -> rsa_first_alt]}
+                assert_equal $rsa_serial [getInfoProperty $info tls_server_cert_serial]
+                assert_equal $ec_serial [getInfoProperty $info tls_server_alt_cert_serial]
             }
-
-            assert_equal $ec_first_primary $rsa_first_alt
-            assert_equal $ec_first_alt $rsa_first_primary
-            assert {$ec_first_primary ne $ec_first_alt}
         }
 
         test {TLS: alt cert and key files must be provided together} {
