@@ -419,7 +419,7 @@ static int tlsCertKeyAlgorithm(X509 *cert) {
     return alg;
 }
 
-/* Point ctx's current certificate at the slot holding key algorithm 'alg'.
+/* Point valkey_tls_ctx's current certificate at the slot holding key algorithm 'alg'.
  *
  * SSL_CERT_SET_FIRST selects the lowest-numbered key algorithm rather than the
  * certificate configured first, so the cursor on its own cannot tell tls-cert-file
@@ -660,11 +660,10 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         goto error;
     }
 
+    /* SSL_CTX_use_certificate_chain_file only succeeds for a certificate whose public
+     * key resolves to one of OpenSSL's key algorithm slots, so this cannot be
+     * NID_undef here. */
     int primary_alg = tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx));
-    if (primary_alg == NID_undef) {
-        serverLog(LL_WARNING, "Could not get public key from %s certificate", client ? "client" : "server");
-        goto error;
-    }
     if (out_algs) out_algs->cert_alg = primary_alg;
 
     if (alt_cert_file) {
@@ -680,11 +679,6 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         }
 
         int alt_alg = tlsCertKeyAlgorithm(SSL_CTX_get0_certificate(ctx));
-        if (alt_alg == NID_undef) {
-            serverLog(LL_WARNING, "Could not get public key from alternate certificate");
-            goto error;
-        }
-
         if (primary_alg == alt_alg) {
             serverLog(LL_WARNING, "Primary and alternate certificates must use different key algorithms");
             goto error;
