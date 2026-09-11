@@ -689,7 +689,7 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         serverLog(LL_WARNING, "Failed to load private key: %s: %s", key_file, errbuf);
         goto error;
     }
-    if (alt_key_file) {
+    if (alt_cert_file) {
         SSL_CTX_set_default_passwd_cb_userdata(ctx, (void *)alt_key_file_pass);
         if (SSL_CTX_use_PrivateKey_file(ctx, alt_key_file, SSL_FILETYPE_PEM) <= 0) {
             ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
@@ -708,7 +708,8 @@ static SSL_CTX *createSSLContext(serverTLSContextConfig *ctx_config, int protoco
         usable_certs++;
     }
     if (usable_certs != (alt_cert_file ? 2 : 1)) {
-        serverLog(LL_WARNING, "%s TLS certificate does not match its private key.", client ? "Client" : "Server");
+        serverLog(LL_WARNING, "A configured %s TLS certificate has no matching private key.",
+                  client ? "client" : "server");
         goto error;
     }
 

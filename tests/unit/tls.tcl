@@ -281,6 +281,8 @@ start_server {tags {"tls"}} {
             set orig_key [lindex [r config get tls-key-file] 1]
             set orig_alt_crt [lindex [r config get tls-alt-cert-file] 1]
             set orig_alt_key [lindex [r config get tls-alt-key-file] 1]
+            set orig_client_crt [lindex [r config get tls-client-cert-file] 1]
+            set orig_client_key [lindex [r config get tls-client-key-file] 1]
 
             set rsa_crt [format "%s/tests/tls/valkey.crt" [pwd]]
             set rsa_key [format "%s/tests/tls/valkey.key" [pwd]]
@@ -291,18 +293,29 @@ start_server {tags {"tls"}} {
                 # OpenSSL puts a key in the slot for its own algorithm and only checks it
                 # against the certificate already there, so a mismatched pair can leave a
                 # certificate loaded with no key instead of failing.
+                set from [count_log_lines 0]
                 catch {r CONFIG SET tls-cert-file $ec_crt tls-key-file $rsa_key \
                                     tls-alt-cert-file $rsa_crt tls-alt-key-file $rsa_key} e
                 assert_match {*Unable to update TLS configuration*} $e
-                verify_log_message 0 "*TLS certificate does not match its private key*" 0
+                verify_log_message 0 "*server TLS certificate has no matching private key*" $from
 
-                # Same the other way round: the alternate certificate left without a key.
+                # Same the other way round: the alternate certificate left without a key,
+                # while tls-cert-file and tls-key-file are a good pair.
+                set from [count_log_lines 0]
                 catch {r CONFIG SET tls-cert-file $ec_crt tls-key-file $ec_key \
                                     tls-alt-cert-file $rsa_crt tls-alt-key-file $ec_key} e
                 assert_match {*Unable to update TLS configuration*} $e
+                verify_log_message 0 "*server TLS certificate has no matching private key*" $from
+
+                # The client context goes through the same check.
+                set from [count_log_lines 0]
+                catch {r CONFIG SET tls-client-cert-file $ec_crt tls-client-key-file $rsa_key} e
+                assert_match {*Unable to update TLS configuration*} $e
+                verify_log_message 0 "*client TLS certificate has no matching private key*" $from
             } finally {
                 r CONFIG SET tls-cert-file $orig_crt tls-key-file $orig_key \
-                             tls-alt-cert-file $orig_alt_crt tls-alt-key-file $orig_alt_key
+                             tls-alt-cert-file $orig_alt_crt tls-alt-key-file $orig_alt_key \
+                             tls-client-cert-file $orig_client_crt tls-client-key-file $orig_client_key
             }
         }
 
