@@ -5069,6 +5069,31 @@ start_server {tags {"hash expire listpack"}} {
             fail "volatile tracking not cleared after reap"
         }
     }
+
+    test "RESTORE tracks field TTLs when the load converts mid-listpack" {
+        r config set hash-max-listpack-value 64
+        r del myhash
+        r hset myhash a b cc dd
+        r hexpire myhash 1000 FIELDS 1 a
+        assert_encoding listpack myhash
+        set payload [r dump myhash]
+
+        # Lowering the value threshold to 1 makes the loader append the
+        # volatile field a/b to the listpack (both 1 byte) and only then
+        # convert, on field 'cc'. The aggregate header is installed after the
+        # loop, so at conversion time the listpack does not have one.
+        r config set hash-max-listpack-value 1
+        r del myhash
+        r restore myhash 0 $payload
+        assert_encoding hashtable myhash
+
+        assert_equal 1 [get_keys_with_volatile_items r]
+        assert_equal {1000} [r httl myhash FIELDS 1 a]
+        assert_equal 1 [r hdel myhash a]
+        assert_equal 0 [get_keys_with_volatile_items r]
+        assert_equal {dd} [r hget myhash cc]
+        r config set hash-max-listpack-value 64
+    }
 }
 
 start_server {tags {"hashexpire"}} {

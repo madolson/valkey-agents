@@ -995,7 +995,11 @@ void hashTypeConvertListpack(robj *o, int enc) {
 
     } else if (enc == OBJ_ENCODING_HASHTABLE) {
         hashTypeIterator hi;
-        bool has_volatile = hashTypeHasVolatileFields(o);
+        /* Whether any entry we actually carried over has an expiry. Derived
+         * from the entries themselves rather than from the aggregate header,
+         * which a half-built listpack (the RDB loader appends the header last)
+         * does not have yet. */
+        bool has_volatile = false;
 
         hashtable *ht = hashtableCreate(&hashHashtableType);
 
@@ -1008,6 +1012,7 @@ void hashTypeConvertListpack(robj *o, int enc) {
             sds value = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_VALUE);
             /* Get expiry for this field from the metadata value */
             long long expiry = hashTypeCurrentExpiry(o, &hi);
+            if (expiry != EXPIRY_NONE) has_volatile = true;
             entry *entry = entryCreate(field, value, expiry);
             sdsfree(field);
             if (!hashtableAdd(ht, entry)) {
