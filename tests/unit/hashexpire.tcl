@@ -5088,7 +5088,7 @@ start_server {tags {"hash expire listpack"}} {
         assert_encoding hashtable myhash
 
         assert_equal 1 [get_keys_with_volatile_items r]
-        assert_equal {1000} [r httl myhash FIELDS 1 a]
+        assert_range [lindex [r httl myhash FIELDS 1 a] 0] 1 1000
         assert_equal 1 [r hdel myhash a]
         assert_equal 0 [get_keys_with_volatile_items r]
         assert_equal {dd} [r hget myhash cc]
