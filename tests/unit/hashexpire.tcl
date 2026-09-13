@@ -5009,6 +5009,7 @@ start_server {tags {"hashexpire"}} {
 
 start_server {tags {"hash expire listpack"}} {
     r config set hash-max-listpack-entries 128
+    set original_max_value [lindex [r config get hash-max-listpack-value] 1]
 
     test "Volatile-count header tracks listpack expiry transitions" {
         r del myhash
@@ -5070,21 +5071,22 @@ start_server {tags {"hash expire listpack"}} {
         }
     }
 
-    test "RESTORE tracks field TTLs when the load converts mid-listpack" {
-        r config set hash-max-listpack-value 64
-        r del myhash
-        r hset myhash a b cc dd
-        r hexpire myhash 1000 FIELDS 1 a
-        assert_encoding listpack myhash
-        set payload [r dump myhash]
+    # A HASH_2 payload that makes the loader convert to a hashtable only after
+    # a volatile field has landed in the listpack: 'a' and 'b' are one byte and
+    # stay under the lowered value threshold, field 'cc' does not. The loader
+    # installs the aggregate volatile-count header after its listpack loop, so
+    # at conversion time the listpack does not have one yet.
+    r config set hash-max-listpack-value $original_max_value
+    r del myhash
+    r hset myhash a b cc dd
+    r hexpire myhash 1000 FIELDS 1 a
+    assert_encoding listpack myhash
+    set mid_load_payload [r dump myhash]
+    r config set hash-max-listpack-value 1
 
-        # Lowering the value threshold to 1 makes the loader append the
-        # volatile field a/b to the listpack (both 1 byte) and only then
-        # convert, on field 'cc'. The aggregate header is installed after the
-        # loop, so at conversion time the listpack does not have one.
-        r config set hash-max-listpack-value 1
+    test "RESTORE tracks field TTLs when the load converts mid-listpack" {
         r del myhash
-        r restore myhash 0 $payload
+        r restore myhash 0 $mid_load_payload
         assert_encoding hashtable myhash
 
         assert_equal 1 [get_keys_with_volatile_items r]
@@ -5092,8 +5094,18 @@ start_server {tags {"hash expire listpack"}} {
         assert_equal 1 [r hdel myhash a]
         assert_equal 0 [get_keys_with_volatile_items r]
         assert_equal {dd} [r hget myhash cc]
-        r config set hash-max-listpack-value 64
     }
+
+    test "Field TTLs survive a save after a mid-listpack conversion" {
+        # An untracked expiry also makes the save pick RDB_TYPE_HASH over
+        # RDB_TYPE_HASH_2, dropping the TTL instead of crashing.
+        r del myhash
+        r restore myhash 0 $mid_load_payload
+        r debug reload
+        assert_range [lindex [r httl myhash FIELDS 1 a] 0] 1 1000
+    } {} {needs:debug}
+
+    r config set hash-max-listpack-value $original_max_value
 }
 
 start_server {tags {"hashexpire"}} {
