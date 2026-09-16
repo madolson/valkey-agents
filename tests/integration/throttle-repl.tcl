@@ -313,9 +313,17 @@ start_server {tags {"throttle repl external:skip"}} {
             $writer CLIENT ID
             set wid [$writer read]
 
-            # Activate throttling.
-            for {set i 0} {$i < 5000} {incr i} {
-                $writer set key:$i [string repeat w 1000]
+            # Activate throttling. Once the throttler pauses reads on this client,
+            # anything still unsent blocks in write() forever, because the only
+            # replica is frozen so the throttle rate decays to zero. Keep the
+            # in-flight bytes small enough to fit in the socket buffers and
+            # re-check activation between chunks.
+            set payload [string repeat w 1000]
+            set chunk [expr {65536 / [string length $payload] + 1}]
+            for {set i 0} {$i < 5000 && [throttle_rate $primary] < 0} {incr i $chunk} {
+                for {set j 0} {$j < $chunk} {incr j} {
+                    $writer set key:[expr {$i + $j}] $payload
+                }
             }
             wait_for_condition 50 100 {
                 [throttle_rate $primary] >= 0
