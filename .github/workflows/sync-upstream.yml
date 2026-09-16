@@ -1,0 +1,86 @@
+name: Sync unstable from upstream
+
+# Fast-forwards or merges valkey-io/valkey unstable into this repo's unstable and
+# pushes it directly. No pull request is opened.
+#
+# Direct pushes to unstable are blocked by the "protect-unstable" ruleset, whose only
+# bypass actor is a deploy key. That is why this job authenticates with the
+# UPSTREAM_SYNC_DEPLOY_KEY secret rather than GITHUB_TOKEN: github-actions[bot] holds no
+# repository role and cannot bypass the ruleset.
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    if: github.repository == 'madolson/valkey-agents'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: unstable
+          fetch-depth: 0
+          persist-credentials: true
+          ssh-key: ${{ secrets.UPSTREAM_SYNC_DEPLOY_KEY }}
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/valkey-io/valkey.git
+          git fetch --no-tags upstream unstable
+
+      - name: Report divergence
+        id: divergence
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/unstable)
+          AHEAD=$(git rev-list --count upstream/unstable..HEAD)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "$BEHIND commit(s) to take, $AHEAD local commit(s) to preserve."
+          git log --oneline upstream/unstable..HEAD
+
+      - name: Merge and push
+        if: steps.divergence.outputs.behind != '0'
+        id: merge
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git merge --ff-only upstream/unstable 2>/dev/null; then
+            echo "Fast-forwarded."
+          elif git merge --no-edit -m 'Merge upstream valkey-io/valkey unstable' upstream/unstable; then
+            echo "Merged."
+          else
+            git merge --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Merge conflict against upstream/unstable. Resolve by hand."
+            exit 1
+          fi
+          git push origin unstable
+
+      - name: Open an issue on conflict
+        if: failure() && steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE='Upstream sync needs a manual merge'
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" \
+            --json number --jq '.[0].number // empty')
+          BODY=$(printf '%s\n' \
+            "\`sync-upstream.yml\` could not merge \`upstream/unstable\` without conflicts." \
+            "" \
+            "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "" \
+            "Resolve locally, then push to \`unstable\`:" \
+            "" \
+            '```' \
+            "git fetch upstream unstable && git merge upstream/unstable" \
+            '```')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
