@@ -1011,10 +1011,15 @@ start_server {overrides {forkless-infrastructure-enabled yes save ""}} {
         set num_keys 100
         createComplexDatasetForVerification r $num_keys
         
-        # Set TTLs on all keys - key i expires in (i/10 + 1) seconds
-        set start_time [clock milliseconds]
+        # Set TTLs on all keys - key i expires in (i/10 + 1) seconds.
+        # Record each key's deadline as its own EXPIREs are issued. This loop is
+        # 1200 synchronous round trips and takes seconds on a slow machine, so a
+        # single pre-loop timestamp does not describe when key i actually dies.
+        # Sampling before the 12 EXPIREs keeps deadline($i) at or below every
+        # real deadline, which is the safe direction for both checks below.
         for {set i 0} {$i < $num_keys} {incr i} {
             set ttl [expr {$i/10 + 1}]
+            set deadline($i) [expr {[clock milliseconds] + $ttl * 1000}]
             foreach prefix {before int lst set zset hash hll bits geo geo_set stream iset} {
                 r expire ${prefix}_${i} $ttl
             }
@@ -1039,11 +1044,13 @@ start_server {overrides {forkless-infrastructure-enabled yes save ""}} {
         }
         
         while {[llength $verified] > 0} {
-            set elapsed_time [expr {([clock milliseconds] - $start_time) / 1000.0}]
-            
             foreach i $verified {
+                # Re-sample per key: a single sample per outer pass goes stale
+                # across the up to 1200 EXISTS calls issued below it.
+                set now [clock milliseconds]
+
                 # If not yet expired, verify all data types exist
-                if {$elapsed_time < [expr {$i/10.0}]} {
+                if {$now + 1000 < $deadline($i)} {
                     assert_equal [r exists before_${i}] 1
                     assert_equal [r exists int_${i}] 1
                     assert_equal [r exists lst_${i}] 1
@@ -1059,7 +1066,7 @@ start_server {overrides {forkless-infrastructure-enabled yes save ""}} {
                 }
                 
                 # If expired for more than 2 seconds, verify all data types are gone
-                if {$elapsed_time > [expr {$i/10.0 + 2}]} {
+                if {$now > $deadline($i) + 2000} {
                     assert_equal [r exists before_${i}] 0
                     assert_equal [r exists int_${i}] 0
                     assert_equal [r exists lst_${i}] 0
