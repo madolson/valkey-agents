@@ -3,6 +3,13 @@
 # We drive the throttling by SIGSTOP-ing the replica,
 # so its output buffer on the primary grows and never drains.
 
+# Size in bytes of the replica's output buffer on the primary.
+proc replica_cob_bytes {r} {
+    set omem 0
+    regexp {omem=(\d+)} [{*}$r client list type replica] -> omem
+    return $omem
+}
+
 proc throttle_rate {r} {
     getInfoProperty [{*}$r info throttling] repl_throttle_rate
 }
@@ -152,18 +159,41 @@ start_server {tags {"throttle repl external:skip"}} {
                 fail "throttler never began queueing clients"
             }
 
-            # Write 30MB total (30 x 1MB values). This is well above the 1mb
-            # soft limit and well below the 1024mb hard limit, so the replica's
-            # COB lands in between.
-            set value_size [expr {1 * 1024 * 1024}]
-            set num_writes 30
-            for {set i 0} {$i < $num_writes} {incr i} {
+            # Grow the replica's COB past the 1mb soft limit and stop there. It stays
+            # far below the 1024mb hard limit, so the COB lands in between.
+            #
+            # This phase has to finish inside the throttler's soft-limit exemption,
+            # which only holds for 4 * STEADY_STATE_CONVERGENCE_SECS = 120s after the
+            # COB crossed the soft limit (src/throttle_repl.c:136-141). The throttler
+            # rate-limits ops/sec and, with the replica frozen, drives that rate toward
+            # zero, so a phase sized by a fixed op count has no time bound and can
+            # outlast the exemption on a slow build. Bound it by the COB reaching the
+            # state under test instead.
+            set soft_limit [expr {1 * 1024 * 1024}]
+            set value_size [expr {256 * 1024}]
+            set above_soft 0
+            for {set i 0} {$i < 200 && !$above_soft} {incr i} {
                 $writer set key:$i [string repeat x $value_size]
+                if {[replica_cob_bytes $primary] > $soft_limit} {
+                    set above_soft 1
+                }
+            }
+            if {!$above_soft} {
+                resume_process $replica_pid
+                fail "replica COB never grew above the soft COB limit"
             }
 
-            if {[status $primary connected_slaves] != 1} {
-                resume_process $replica_pid
-                fail "replica was disconnected while above soft but below hard COB limit"
+            # soft_limit_seconds is 0, so checkClientOutputBufferLimits() kills the
+            # replica as soon as a unixtime second ticks past the first observation
+            # (src/networking.c:6719-6729), and clientsCron re-checks every cycle
+            # (src/server.c:1315). Holding above the soft limit across that boundary is
+            # what proves the throttler's exemption is keeping the replica connected.
+            for {set i 0} {$i < 30} {incr i} {
+                if {[status $primary connected_slaves] != 1} {
+                    resume_process $replica_pid
+                    fail "replica was disconnected while above soft but below hard COB limit"
+                }
+                after 100
             }
             wait_for_condition 50 100 {
                 [throttle_rate $primary] >= 0
