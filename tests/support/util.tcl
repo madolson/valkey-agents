@@ -184,8 +184,8 @@ proc wait_for_sync {r {maxtries 50} {delay 100}} {
     }
 }
 
-proc wait_replica_online r {
-    wait_for_condition 50 100 {
+proc wait_replica_online {r {maxtries 50} {delay 100}} {
+    wait_for_condition $maxtries $delay {
         [string match "*slave0:*,state=online*" [$r info replication]]
     } else {
         fail "replica didn't online in time"
