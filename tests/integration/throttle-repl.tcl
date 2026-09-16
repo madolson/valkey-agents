@@ -14,6 +14,27 @@ proc client_throttled {r wid} {
     string match {*h*} $flags
 }
 
+# Keep issuing writes until the throttler activates.
+#
+# A fixed-size burst followed by a plain wait_for_condition is not enough: the
+# primary keeps writing the replication stream into the socket until the kernel
+# buffers fill, so a burst that fits in the primary's send buffer plus the frozen
+# replica's receive buffer never grows the primary-side COB past the activation
+# threshold. Once the burst is over nothing can make the wait succeed, so the
+# stimulus has to continue until activation is observed.
+proc wait_throttle_activated {r writer} {
+    set payload [string repeat w 2000]
+    for {set i 0} {$i < 200} {incr i} {
+        for {set j 0} {$j < 200} {incr j} {
+            $writer set key:$j $payload
+        }
+        if {[throttle_rate $r] >= 0} {
+            return 1
+        }
+    }
+    return 0
+}
+
 # Keep issuing writes until the writer client is observed being throttled.
 proc wait_throttled_client {r writer wid} {
     for {set k 0} {$k < 1000} {incr k} {
@@ -94,12 +115,7 @@ start_server {tags {"throttle repl external:skip"}} {
             set wid [$writer read]
 
             # Flood writes to grow the replica's COB and activate the throttler.
-            for {set i 0} {$i < 5000} {incr i} {
-                $writer set key:$i [string repeat x 1000]
-            }
-            wait_for_condition 50 100 {
-                [throttle_rate $primary] >= 0
-            } else {
+            if {![wait_throttle_activated $primary $writer]} {
                 resume_process $replica_pid
                 fail "throttle did not activate while the replica's COB was growing"
             }
@@ -137,17 +153,7 @@ start_server {tags {"throttle repl external:skip"}} {
 
             pause_process $replica_pid
 
-            set activated 0
-            set payload [string repeat w 2000]
-            for {set i 0} {$i < 200 && !$activated} {incr i} {
-                for {set j 0} {$j < 200} {incr j} {
-                    $writer set key:$j $payload
-                }
-                if {[throttle_rate $primary] >= 0} {
-                    set activated 1
-                }
-            }
-            if {!$activated} {
+            if {![wait_throttle_activated $primary $writer]} {
                 resume_process $replica_pid
                 fail "throttler never began queueing clients"
             }
@@ -191,17 +197,7 @@ start_server {tags {"throttle repl external:skip"}} {
 
             pause_process $replica_pid
 
-            set activated 0
-            set payload [string repeat w 2000]
-            for {set i 0} {$i < 200 && !$activated} {incr i} {
-                for {set j 0} {$j < 200} {incr j} {
-                    $writer set key:$j $payload
-                }
-                if {[throttle_rate $primary] >= 0} {
-                    set activated 1
-                }
-            }
-            if {!$activated} {
+            if {![wait_throttle_activated $primary $writer]} {
                 resume_process $replica_pid
                 fail "throttler never began queueing clients"
             }
@@ -237,12 +233,7 @@ start_server {tags {"throttle repl external:skip"}} {
             set wid [$writer read]
 
             # Activate throttling.
-            for {set i 0} {$i < 5000} {incr i} {
-                $writer set fkey:$i [string repeat z 1000]
-            }
-            wait_for_condition 50 100 {
-                [throttle_rate $primary] >= 0
-            } else {
+            if {![wait_throttle_activated $primary $writer]} {
                 resume_process $replica_pid
                 fail "throttle did not activate before failover"
             }
@@ -276,12 +267,7 @@ start_server {tags {"throttle repl external:skip"}} {
             set wid [$writer read]
 
             # Activate throttling.
-            for {set i 0} {$i < 5000} {incr i} {
-                $writer set key:$i [string repeat w 1000]
-            }
-            wait_for_condition 50 100 {
-                [throttle_rate $primary] >= 0
-            } else {
+            if {![wait_throttle_activated $primary $writer]} {
                 resume_process $replica_pid
                 fail "Throttler did not activate."
             }
@@ -314,12 +300,7 @@ start_server {tags {"throttle repl external:skip"}} {
             set wid [$writer read]
 
             # Activate throttling.
-            for {set i 0} {$i < 5000} {incr i} {
-                $writer set key:$i [string repeat w 1000]
-            }
-            wait_for_condition 50 100 {
-                [throttle_rate $primary] >= 0
-            } else {
+            if {![wait_throttle_activated $primary $writer]} {
                 resume_process $replica_pid
                 fail "Throttler did not activate."
             }
