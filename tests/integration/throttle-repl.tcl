@@ -63,9 +63,13 @@ proc teardown_throttle_replication {primary replica} {
         fail "repl throttler didn't tear down after the test"
     }
 
-    # The replica must be fully synced and hold the same dataset.
-    wait_for_sync $replica
-    wait_replica_online $primary
+    # The replica must be fully synced and hold the same dataset. A test may have
+    # left the link broken, so this can require a full resync. The default 5s is a
+    # duration, not a condition: budget for the resync instead, and give valgrind
+    # room to fork, transfer and load.
+    set resync_tries [expr {$::valgrind ? 1200 : 300}]
+    wait_for_sync $replica $resync_tries 100
+    wait_replica_online $primary $resync_tries 100
     wait_for_ofs_sync $primary $replica
     assert_equal [$primary dbsize] [$replica dbsize]
 
@@ -189,6 +193,7 @@ start_server {tags {"throttle repl external:skip"}} {
             $writer CLIENT ID
             set wid [$writer read]
 
+            set logline [count_log_lines 0]
             pause_process $replica_pid
 
             set activated 0
@@ -206,12 +211,14 @@ start_server {tags {"throttle repl external:skip"}} {
                 fail "throttler never began queueing clients"
             }
 
-            # Write 100MB total (100 x 1MB values). This is well above the 10mb
-            # hard limit, so the replica will be disconnected.
-            set value_size [expr {1 * 1024 * 1024}]
-            set num_writes 100
-            for {set i 0} {$i < $num_writes} {incr i} {
-                $writer set key:$i [string repeat x $value_size]
+            # Push the replica's COB past the 10mb hard limit with 1MB values.
+            # A single key is reused so the dataset stays small: the teardown has
+            # to resync whatever this loop wrote, and the loop stops as soon as
+            # the replica is gone so it cannot keep inflating it.
+            set value [string repeat x [expr {1 * 1024 * 1024}]]
+            for {set i 0} {$i < 100} {incr i} {
+                $writer set bigkey $value
+                if {[status $primary connected_slaves] == 0} break
             }
 
             wait_for_condition 50 100 {
@@ -222,6 +229,11 @@ start_server {tags {"throttle repl external:skip"}} {
                 resume_process $replica_pid
                 fail "throttle did not tear down after the replica was disconnected"
             }
+
+            # The replica must have been dropped by the hard COB limit. Without
+            # this, repl-timeout expiring on the frozen replica satisfies the
+            # connected_slaves == 0 check above and the test proves nothing.
+            wait_for_log_messages 0 {"*overcoming of output buffer limits*"} $logline 50 100
 
             $writer close
             resume_process $replica_pid
