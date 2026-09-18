@@ -3821,6 +3821,8 @@ typedef struct pathHashObject {
 } pathHashObject;
 
 void freePathHashObject(robj *o);
+void freePathHashIndex(rax *index);
+void freePathHashIndexAsync(rax *index, uint64_t num_fields);
 robj *pathHashTypeDup(robj *o);
 size_t pathHashTypeMemUsage(robj *o, size_t sample_size);
 void pathHashTypeDigest(unsigned char *digest, robj *o);

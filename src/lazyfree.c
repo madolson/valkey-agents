@@ -95,6 +95,14 @@ void lazyFreeReplicaKeysWithExpire(void *args[]) {
     atomic_fetch_add_explicit(&lazyfreed_objects, len, memory_order_relaxed);
 }
 
+/* Release a Path Hash index detached from its Path Hash object. */
+void lazyFreePathHashIndex(void *args[]) {
+    rax *index = args[0];
+    freePathHashIndex(index);
+    atomic_fetch_sub_explicit(&lazyfree_objects, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&lazyfreed_objects, 1, memory_order_relaxed);
+}
+
 /* Release the pending_repl_data.blocks list. */
 void lazyfreePendingReplDataBuf(void *args[]) {
     list *pending_repl_data_blocks = args[0];
@@ -118,6 +126,12 @@ size_t lazyfreeGetFreedObjectsCount(void) {
 
 void lazyfreeResetStats(void) {
     atomic_store_explicit(&lazyfreed_objects, 0, memory_order_relaxed);
+}
+
+/* Effort needed to free a Path Hash index: one allocation per rax node plus
+ * one per field held by the payloads. */
+static size_t pathHashFreeEffort(rax *index, uint64_t num_fields) {
+    return index->numnodes + num_fields;
 }
 
 /* Return the amount of work needed in order to free an object.
@@ -174,7 +188,7 @@ size_t lazyfreeGetFreeEffort(robj *key, robj *obj, int dbid) {
         return effort;
     } else if (obj->type == OBJ_PATH_HASH) {
         pathHashObject *path_hash = objectGetVal(obj);
-        return path_hash->index->numnodes + path_hash->num_fields;
+        return pathHashFreeEffort(path_hash->index, path_hash->num_fields);
     } else if (obj->type == OBJ_MODULE) {
         size_t effort = moduleGetFreeEffort(key, obj, dbid);
         /* If the module's free_effort returns 0, we will use asynchronous free
@@ -204,6 +218,17 @@ void freeObjAsync(robj *key, robj *obj, int dbid) {
         bioCreateLazyFreeJob(lazyfreeFreeObject, 1, obj);
     } else {
         decrRefCount(obj);
+    }
+}
+
+/* Free a Path Hash index that the caller already detached from its object.
+ * If the index is big enough, free it in async way. */
+void freePathHashIndexAsync(rax *index, uint64_t num_fields) {
+    if (pathHashFreeEffort(index, num_fields) > LAZYFREE_THRESHOLD) {
+        atomic_fetch_add_explicit(&lazyfree_objects, 1, memory_order_relaxed);
+        bioCreateLazyFreeJob(lazyFreePathHashIndex, 1, index);
+    } else {
+        freePathHashIndex(index);
     }
 }
 
