@@ -51,9 +51,15 @@ robj *createPathHashObject(void) {
     return o;
 }
 
+/* Free a Path Hash index and every payload it references. Exposed so that the
+ * lazy free thread can release an index that was detached from its object. */
+void freePathHashIndex(rax *index) {
+    raxFreeWithCallback(index, freePathHashPayload);
+}
+
 void freePathHashObject(robj *o) {
     pathHashObject *path_hash = objectGetVal(o);
-    raxFreeWithCallback(path_hash->index, freePathHashPayload);
+    freePathHashIndex(path_hash->index);
     zfree(path_hash);
 }
 
@@ -386,7 +392,9 @@ void phdelCommand(client *c) {
         sds path = objectGetVal(c->argv[2]);
         void *removed = NULL;
         serverAssert(raxRemove(path_hash->index, (unsigned char *)path, sdslen(path), &removed));
-        decrRefCount(removed);
+        /* The payload is unlinked from the index, so a payload holding many
+         * fields can be released by the lazy free thread. */
+        server.lazyfree_lazy_user_del ? freeObjAsync(NULL, removed, -1) : decrRefCount(removed);
     }
     if (deleted) {
         signalModifiedKey(c, c->db, c->argv[1]);
@@ -569,10 +577,17 @@ void phdelprefixCommand(client *c) {
     if (prefix_len == 0) {
         long long deleted = raxSize(path_hash->index);
         if (deleted) {
-            rax *empty = raxNew();
-            raxFreeWithCallback(path_hash->index, freePathHashPayload);
-            path_hash->index = empty;
+            /* Detach the whole index before releasing it, so that the memory
+             * handed to the lazy free thread is already unreachable from the
+             * keyspace. */
+            rax *detached = path_hash->index;
+            uint64_t detached_fields = path_hash->num_fields;
+            path_hash->index = raxNew();
             path_hash->num_fields = 0;
+            if (server.lazyfree_lazy_user_del)
+                freePathHashIndexAsync(detached, detached_fields);
+            else
+                freePathHashIndex(detached);
             signalModifiedKey(c, c->db, c->argv[1]);
             notifyKeyspaceEvent(NOTIFY_PATH_HASH, "phdelprefix", c->argv[1], c->db->id);
             server.dirty += deleted;
