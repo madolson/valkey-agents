@@ -432,6 +432,8 @@ start_server {tags {"repl external:skip"}} {
             close_replication_stream $repl
         }
 
+        # Valgrind does not reproduce hardware long double overflow, see
+        # tests/unit/type/incr.tcl.
         test {INCREX BYFLOAT arithmetic overflow does not propagate} {
             set big [ldbl_overflow_operand -1]
             r -1 del foo
@@ -445,7 +447,7 @@ start_server {tags {"repl external:skip"}} {
                 {set marker 1}
             }
             close_replication_stream $repl
-        }
+        } undefined {valgrind:skip}
 
         test {ROLE in master reports master with a slave} {
             set res [r -1 role]
