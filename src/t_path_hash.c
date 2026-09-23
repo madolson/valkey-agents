@@ -51,15 +51,9 @@ robj *createPathHashObject(void) {
     return o;
 }
 
-/* Free a Path Hash index and every payload it references. Exposed so that the
- * lazy free thread can release an index that was detached from its object. */
-void freePathHashIndex(rax *index) {
-    raxFreeWithCallback(index, freePathHashPayload);
-}
-
 void freePathHashObject(robj *o) {
     pathHashObject *path_hash = objectGetVal(o);
-    freePathHashIndex(path_hash->index);
+    raxFreeWithCallback(path_hash->index, freePathHashPayload);
     zfree(path_hash);
 }
 
@@ -577,17 +571,17 @@ void phdelprefixCommand(client *c) {
     if (prefix_len == 0) {
         long long deleted = raxSize(path_hash->index);
         if (deleted) {
-            /* Detach the whole index before releasing it, so that the memory
-             * handed to the lazy free thread is already unreachable from the
-             * keyspace. */
-            rax *detached = path_hash->index;
-            uint64_t detached_fields = path_hash->num_fields;
-            path_hash->index = raxNew();
+            /* Swap the whole index into a detached object before releasing it,
+             * so that the memory handed to the lazy free thread is already
+             * unreachable from the keyspace. */
+            robj *detached = createPathHashObject();
+            pathHashObject *old = objectGetVal(detached);
+            rax *empty = old->index;
+            old->index = path_hash->index;
+            old->num_fields = path_hash->num_fields;
+            path_hash->index = empty;
             path_hash->num_fields = 0;
-            if (server.lazyfree_lazy_user_del)
-                freePathHashIndexAsync(detached, detached_fields);
-            else
-                freePathHashIndex(detached);
+            server.lazyfree_lazy_user_del ? freeObjAsync(NULL, detached, -1) : decrRefCount(detached);
             signalModifiedKey(c, c->db, c->argv[1]);
             notifyKeyspaceEvent(NOTIFY_PATH_HASH, "phdelprefix", c->argv[1], c->db->id);
             server.dirty += deleted;
