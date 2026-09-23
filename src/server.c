@@ -5328,6 +5328,12 @@ int finishShutdown(void) {
 
     moduleUnloadAllModules();
 
+    /* Terminate the IO workers so their cleanup handlers run and free their
+     * thread-local resources. This has to come after module unloading, which
+     * calls drainIOThreadsQueue() and needs the workers alive, and after every
+     * "goto error" above, which leaves the server running. */
+    killIOThreads();
+
     serverLog(LL_WARNING, "%s is now ready to exit, bye bye...", server.sentinel_mode ? "Sentinel" : "Valkey");
     return C_OK;
 
