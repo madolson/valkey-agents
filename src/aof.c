@@ -2337,6 +2337,16 @@ int rewriteStreamObject(rio *r, robj *key, robj *o) {
     return 1;
 }
 
+/* Emit JSON.SET <key> . <document>, the command valkey-json rewrites to.
+ * The function returns 0 on error, 1 on success. */
+static int rewriteJsonObject(rio *r, robj *key, robj *o) {
+    sds text = jsonSerialize(sdsempty(), objectGetVal(o), NULL, 0);
+    int ok = rioWriteBulkCount(r, '*', 4) && rioWriteBulkString(r, "JSON.SET", 8) && rioWriteBulkObject(r, key) &&
+             rioWriteBulkString(r, ".", 1) && rioWriteBulkString(r, text, sdslen(text));
+    sdsfree(text);
+    return ok;
+}
+
 /* Call the module type callback in order to rewrite a data type
  * that is exported by a module and is not handled by the server itself.
  * The function returns 0 on error, 1 on success. */
@@ -2411,7 +2421,7 @@ int rewriteObjectRio(rio *aof, robj *o, int db_num) {
     } else if (objectGetType(o) == OBJ_PATH_HASH) {
         if (rewritePathHashObject(aof, &key, o) == 0) return C_ERR;
     } else if (objectGetType(o) == OBJ_JSON) {
-        serverPanic("JSON keys cannot be rewritten to AOF yet");
+        if (rewriteJsonObject(aof, &key, o) == 0) return C_ERR;
     } else if (objectGetType(o) == OBJ_MODULE) {
         if (rewriteModuleObject(aof, &key, o, db_num) == 0) return C_ERR;
     } else {

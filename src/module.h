@@ -194,6 +194,7 @@ void moduleLoadFromQueue(void);
 int moduleGetCommandKeysViaAPI(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
 int moduleGetCommandChannelsViaAPI(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
 moduleType *moduleTypeLookupModuleByID(uint64_t id);
+uint64_t moduleTypeEncodeId(const char *name, int encver);
 moduleType *moduleTypeLookupModuleByName(const char *name);
 moduleType *moduleTypeLookupModuleByNameIgnoreCase(const char *name);
 void moduleTypeNameByID(char *name, uint64_t moduleid);

@@ -790,7 +790,11 @@ int rdbGetObjectType(robj *o, int rdbver) {
             return RDB_TYPE_PATH_HASH;
         else
             return -1; /* can't be stored in old RDB */
-    case OBJ_JSON: serverPanic("JSON keys cannot be serialized yet");
+    case OBJ_JSON:
+        if (rdbver >= 82)
+            return RDB_TYPE_JSON;
+        else
+            return -1; /* can't be stored in old RDB */
     case OBJ_MODULE: return RDB_TYPE_MODULE_2;
     default: serverPanic("Unknown object type");
     }
@@ -1254,6 +1258,12 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid, unsigned char rdbt
             hashTypeResetIterator(&fields);
         }
         raxStop(&paths);
+    } else if (objectGetType(o) == OBJ_JSON) {
+        sds text = jsonSerialize(sdsempty(), objectGetVal(o), NULL, 0);
+        n = rdbSaveRawString(rdb, (unsigned char *)text, sdslen(text));
+        sdsfree(text);
+        if (n == -1) return -1;
+        nwritten += n;
     } else if (objectGetType(o) == OBJ_MODULE) {
         /* Save a module-specific value. */
         ValkeyModuleIO io;
@@ -1975,6 +1985,62 @@ robj *rdbLoadCheckModuleValue(rio *rdb, char *modulename) {
     return createStringObject("module-dummy-value", 18);
 }
 
+/* A document nests no deeper than the json.max-path-limit in force when it was
+ * written, and that limit may since have been lowered, so loading must accept
+ * more than any write limit. Parsing recurses, so the limit also keeps a
+ * crafted RESTORE payload from exhausting the stack. */
+#define RDB_JSON_MAX_DEPTH 10000
+
+/* Data type name of valkey-json, whose values load natively. */
+#define JSON_MODULE_TYPE_NAME "ReJSON-RL"
+
+/* Load JSON text saved by rdbSaveObject(), which is also what the valkey-json
+ * module saves at encoding version 3, and return it as an OBJ_JSON. */
+static robj *rdbLoadJsonText(rio *rdb) {
+    sds text = rdbGenericLoadStringObject(rdb, RDB_LOAD_SDS, NULL);
+    if (text == NULL) return NULL;
+    int err;
+    jsonValue *root = jsonParse(text, sdslen(text), RDB_JSON_MAX_DEPTH, &err, NULL);
+    sdsfree(text);
+    if (root == NULL) {
+        rdbReportCorruptRDB("Invalid JSON document: %s", jsonErrorMessage(err));
+        return NULL;
+    }
+    return createJsonObject(root);
+}
+
+/* Load a valkey-json module value natively when that module isn't loaded. At
+ * encoding version 3 the module saves one string, the compact JSON text,
+ * followed by the module value EOF marker. */
+static robj *rdbLoadJsonModuleValue(rio *rdb, int encver) {
+    if (encver != 3) {
+        rdbReportCorruptRDB("The RDB file contains %s module data at encoding version %d. Only encoding version 3 "
+                            "loads without the valkey-json module, so load and save this data with the module first.",
+                            JSON_MODULE_TYPE_NAME, encver);
+        return NULL;
+    }
+    uint64_t opcode = rdbLoadLen(rdb, NULL);
+    if (opcode == RDB_LENERR) return NULL;
+    if (opcode != RDB_MODULE_OPCODE_STRING) {
+        rdbReportCorruptRDB("Unexpected opcode %llu in %s module data", (unsigned long long)opcode,
+                            JSON_MODULE_TYPE_NAME);
+        return NULL;
+    }
+    robj *o = rdbLoadJsonText(rdb);
+    if (o == NULL) return NULL;
+    uint64_t eof = rdbLoadLen(rdb, NULL);
+    if (eof != RDB_MODULE_OPCODE_EOF) {
+        if (eof != RDB_LENERR) {
+            rdbReportCorruptRDB("The RDB file contains %s module data that is not terminated by the proper module "
+                                "value EOF marker",
+                                JSON_MODULE_TYPE_NAME);
+        }
+        decrRefCount(o);
+        return NULL;
+    }
+    return o;
+}
+
 /* callback for hashZiplistConvertAndValidateIntegrity.
  * Check that the ziplist doesn't have duplicate hash field names.
  * The ziplist element pointed by 'p' will be converted and stored into listpack. */
@@ -2652,6 +2718,8 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error, int rd
                 path_hash->num_fields++;
             }
         }
+    } else if (rdbtype == RDB_TYPE_JSON) {
+        if ((o = rdbLoadJsonText(rdb)) == NULL) return NULL;
     } else if (rdbtype == RDB_TYPE_LIST_QUICKLIST || rdbtype == RDB_TYPE_LIST_QUICKLIST_2) {
         if ((len = rdbLoadLen(rdb, NULL)) == RDB_LENERR) return NULL;
         if (len == 0) goto emptykey;
@@ -3313,6 +3381,11 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error, int rd
             return rdbLoadCheckModuleValue(rdb, name);
         }
 
+        if (mt == NULL && (moduleid >> 10) == (moduleTypeEncodeId(JSON_MODULE_TYPE_NAME, 0) >> 10)) {
+            if ((o = rdbLoadJsonModuleValue(rdb, moduleid & 1023)) == NULL) return NULL;
+            if (error) *error = 0;
+            return o;
+        }
         if (mt == NULL) {
             char name[10];
             moduleTypeNameByID(name, moduleid);

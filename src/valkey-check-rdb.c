@@ -166,6 +166,7 @@ char *rdb_type_string[] = {
     "stream-v3",
     "hash-volatile-items",
     "pathhash",
+    "json",
 };
 
 static_assert(sizeof(rdb_type_string) / sizeof(rdb_type_string[0]) == RDB_TYPE_LAST, "Mismatch between enum and string table");
@@ -412,6 +413,8 @@ void computeDatasetProfile(int dbid, robj *keyobj, robj *o, long long expiretime
         }
         raxStop(&paths);
         statsRecordCount(raxSize(path_hash->index), stats);
+    } else if (o->type == OBJ_JSON) {
+        statsRecordCount(1, stats);
     } else if (o->type == OBJ_MODULE) {
         statsRecordCount(1, stats);
     } else {
