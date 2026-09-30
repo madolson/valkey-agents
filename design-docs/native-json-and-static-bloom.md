@@ -4,10 +4,10 @@ Tracking issue: madolson/valkey-agents#13.
 
 ## Overview
 
-valkey-bundle ships JSON and bloom as loadable modules. This plan brings both into `valkey-server`
-by two different routes, landable independently and in either order. JSON is ported to C as a
-native type, `OBJ_JSON`. Bloom stays the existing Rust module, vendored in-tree and linked into
-the binary as a static module through the path Lua already uses.
+valkey-bundle ships JSON and bloom as loadable modules. This plan builds a `valkey-server` that
+has both with no `--loadmodule`, by two different routes. JSON is ported to C as a native type,
+`OBJ_JSON`. Bloom stays the existing Rust module, vendored in-tree and linked into the binary as a
+static module through the path Lua already uses.
 
 The routes differ because the payoff differs. Native JSON measured faster than the module on
 nearly every operation (+13% to +57%), lets `TYPE` and `OBJECT ENCODING` report something real,
@@ -18,43 +18,61 @@ and static linking answers that at the lowest cost.
 
 All measurements quoted here come from the prototype described in #13.
 
-## JSON: native type
+## Test gate
 
-Each step below is one PR with its own tests. Order matters: the harness comes first because the
-module's behaviour is not readable from its source, and every compatibility rule in #13 was found
-by diffing against a live module.
+The work is a sequence of steps on one branch. Every step ends with a commit, and no step is done
+until all of the following pass on that commit:
 
-### 1. Differential harness and fixtures
+- `make` with no warnings.
+- `make -C src test-unit`.
+- `./runtest` full suite, compared against the baseline recorded in step 0. A test that failed on
+  the baseline may still fail; nothing else may.
+- `./runtest-moduleapi`, since static modules and the module config path are both touched.
+- The tests the step adds.
+- From step 5 on, the JSON differential harness with zero behavioural divergences.
 
-- Seeded random corpus generator plus replay tool. It sends identical command sequences to a
-  module-loaded server and a native server and compares replies byte for byte. The two roles must
-  be separate servers; one server sees its own mutations and reports false divergences.
+The JSON steps (1 to 7) and the bloom steps (8 and 9) do not depend on each other and can proceed
+in parallel. Step 10 joins them.
+
+## Step 0: baseline
+
+Build the branch base and run the full gate. Record every failing test by name. This list is the
+only allowance later steps get.
+
+## JSON
+
+### Step 1: differential harness and fixtures
+
+The module's behaviour is not readable from its source. Every compatibility rule in #13 was found
+by diffing against a live module, so the harness comes before any JSON code.
+
+- Build valkey-json at a pinned release as a reference `.so`, outside the tree.
+- Seeded random corpus generator plus replay tool under `utils/json-diff/`. It sends identical
+  command sequences to a module-loaded server and a native server and compares replies byte for
+  byte. The two roles must be separate servers; one server sees its own mutations and reports
+  false divergences.
 - Do not split corpus lines with `shlex` in POSIX mode. It strips quotes from JSON arguments, both
   sides return the same syntax error, and the harness reports zero divergences while testing
-  nothing.
-- Commit an allowlist of known, non-behavioural divergences: arity error capitalisation,
-  `OBJECT ENCODING`, memory figures.
-- Commit module-written RDB fixtures (encoding version 3) under `tests/assets/`.
+  nothing. Include a self-check that a known-divergent pair is reported.
+- Allowlist of known, non-behavioural divergences: arity error capitalisation, `OBJECT ENCODING`,
+  memory figures.
+- Module-written RDB fixtures (encoding version 3) under `tests/assets/`.
 
-The harness lives under `utils/` and runs in CI against the pinned valkey-json release. It is the
-acceptance test for every later step.
+### Step 2: type wiring
 
-### 2. Type wiring
-
-Follow #4506 (native path hash, `a84b2f5b9`), which is the most recent example: 41 files, +2,785
-lines. Touchpoints:
+Follow #4506 (native path hash, `a84b2f5b9`), the most recent example: 41 files, +2,785 lines.
 
 - `src/server.h:798-818`: `OBJ_JSON 8`, `OBJ_TYPE_MAX 9`, `OBJ_ENCODING_JSON`, `NOTIFY_JSON`
   (class `j`; `g$lshzxetmdn` are taken), `@json` ACL category, `json` command group.
 - `src/rdb.h:133`: `RDB_TYPE_JSON = 24`, update `rdbIsObjectType()`.
 - `db.c`, `object.c`, `lazyfree.c`, `aof.c`, `debug.c`, `notify.c`, `acl.c`,
   `valkey-check-rdb.c`, `module.c` (`VALKEYMODULE_KEYTYPE_JSON`, see `module.c:4451`).
-- `defrag.c`: explicit no-op case until step 8. Without it the switch ends in `serverPanic`.
+- `defrag.c`: explicit no-op case. Without it the switch ends in `serverPanic`.
 - `utils/generate-command-code.py` does not handle dotted command names. Fix it, and add the
   `json` group in the three places the generator requires to stay in sync.
 - Makefile and CMake source lists.
 
-### 3. DOM, parser, serializer
+### Step 3: DOM, parser, serializer
 
 `src/json.c`, `src/json.h`, unit tests in `src/unit/`. Rules the DOM has to hold:
 
@@ -71,10 +89,10 @@ lines. Touchpoints:
   on a 3 KB document.
 - Parser sizes each string exactly before copying. Greedy sds growth doubled string cost.
 
-### 4. Path engine
+### Step 4: path engine
 
-JSONPath plus the legacy `.` syntax. The spec is the rule list in #13 §3, reproduced as a table in
-this document when the PR lands. The rules a clean-room implementation gets wrong:
+JSONPath plus the legacy `.` syntax, with unit tests. The rules a clean-room implementation gets
+wrong:
 
 - A missing legacy path is an error, except for `JSON.TYPE` and `JSON.OBJKEYS`, where it is null.
 - A wrong-typed path step is an error only for `JSON.SET` and `JSON.DEL`.
@@ -84,14 +102,14 @@ this document when the PR lands. The rules a clean-room implementation gets wron
   other unmatched path is an error.
 - `..` expands descendant-or-self in DFS preorder.
 
-### 5. Commands
+### Step 5: commands
 
-All 24 `JSON.*` commands, `src/commands/json-*.json`, and `tests/unit/type/json.tcl`. The
-behaviour that needs explicit tests: `JSON.RESP` re-renders numbers as doubles (unlike
-`JSON.GET`), arithmetic result typing follows the operand literal, `JSON.CLEAR` resets per type,
-and `JSON.DEL` with an explicitly empty path deletes nothing.
+All 24 `JSON.*` commands, `src/commands/json-*.json`, and `tests/unit/type/json.tcl`. Behaviour
+that needs explicit tests: `JSON.RESP` re-renders numbers as doubles (unlike `JSON.GET`),
+arithmetic result typing follows the operand literal, `JSON.CLEAR` resets per type, and `JSON.DEL`
+with an explicitly empty path deletes nothing. The harness joins the gate here.
 
-### 6. Persistence and migration
+### Step 6: persistence and migration
 
 - Native RDB format stores serialized JSON text, the same thing the module writes at encoding
   version 3. `RDB_VERSION` goes to 82 (`src/rdb.h:53`; 81 is taken by path hash).
@@ -99,127 +117,89 @@ and `JSON.DEL` with an explicitly empty path deletes nothing.
 - Built-in loader for module type id `ReJSON-RL`. Module type names are 9 characters, so
   `moduleTypeEncodeId()` reproduces the id already in existing files. Encoding version 3 is a
   text parse. Version 0 is refused with a clear error.
-- Upgrade path: attach a native replica to a module primary, full sync, fail over. The prototype
-  verified this end to end. The reverse is refused by the RDB version check, so downgrade is
-  dump-and-restore.
+- Tests: load the step 1 fixtures with byte-identical observable state; `DEBUG RELOAD` and AOF
+  rewrite round-trips; replication from a module-loaded primary to a native replica.
 
-### 7. Upgrade compatibility
+### Step 7: upgrade compatibility
 
 Without these a binary swap fails even though the data migrates.
 
-- **Config routing (blocker).** `src/config.c:637` sends every dotted directive to the module
-  config queue before standard config lookup, and `moduleLoadFromQueue()` exits on leftovers
+- **Config routing.** `src/config.c:637` sends every dotted directive to the module config queue
+  before standard config lookup, and `moduleLoadFromQueue()` exits on leftovers
   (`src/module.c:13492`). A conf file with `json.max-path-limit 128` stops the server. Look dotted
   names up in the standard config dict first, then register `json.max-document-size` and
   `json.max-path-limit` under those exact names.
 - **INFO.** Add a `json` section answering `INFO json` and `INFO everything` but not default
   `INFO`, matching the module's `json_core_metrics` fields so scrapers keep working.
-- **Shared API.** valkey-search indexes JSON through `SharedJSON_Get`, exported with
-  `ValkeyModule_ExportSharedAPI`. Core must register the same name under a static module
-  identity. Verify the exact lookup string in valkey-search and whether it type-checks keys by
-  module type pointer; if it does, search needs a matching change.
 - **`JSON.DEBUG`.** Add `MAX-DEPTH-KEY` and `MAX-SIZE-KEY`. Skip `KEYTABLE-*`, which describes
   interning internals that do not exist natively.
 
-### 8. Memory parity, compact encoding, defrag
+## Bloom
 
-Current gap is 1.0x to 1.79x the module for anything with a container. The arithmetic to parity:
+### Step 8: static link
 
-| | now | + inline values | + 16-byte value | + interned names | module |
-|---|---|---|---|---|---|
-| array element | 33 B | 24 B | 16 B | 16 B | 16-18 B |
-| object member | 48 B | 32 B | 24 B | 24 B | 24-25 B |
+- **Vendor.** `src/modules/bloom/` holds valkey-bloom at a pinned release, its `Cargo.lock`, and
+  `cargo vendor` output, so the build is offline and does not reach into the module repo (the
+  constraint zuiderkwast set in #2657).
+- **Build flag.** `BUILD_BLOOM=no|module|static`, mirroring `BUILD_LUA` (`src/Makefile:303`) and
+  `cmake/Modules/ValkeySetup.cmake`. `static` builds the crate as a `staticlib` and links it with
+  `--whole-archive` and `--export-dynamic`, like `libvalkeylua.a`; `-force_load` on macOS. Rust's
+  std links statically, so this adds no runtime library dependency.
+- **Entry points.** Export `ValkeyModule_OnLoad_bloom` and `ValkeyModule_OnUnload_bloom` with
+  `#[no_mangle]` and default visibility, which `moduleLoadStaticSymbol()` resolves by `dlsym` on
+  the running binary (`src/module.c:13923`).
+- **Startup ordering.** Lua loads at `src/server.c:8177`, after `moduleLoadFromQueue()` at
+  `src/server.c:8164` has already exited on any unconsumed module config. Loading bloom at the same
+  point means any `bf.bloom-*` line in a conf file kills startup. Bloom loads inside
+  `moduleLoadFromQueue()`, before the leftover-config check, and so before `loadDataFromDisk()`
+  (`src/server.c:8195`) where `bloomfltr` payloads resolve.
+- **Link hazards**, each with a fix or a test that fails without it:
+  - `valkey-module` 0.1.14's `build.rs` reuses one `cc::Build` across two `compile()` calls, so
+    the staticlib carries two copies of `redismodule.o`: a duplicate symbol under
+    `--whole-archive`. Patch the vendored crate.
+  - Whole-archive linking runs global constructors before `main()`, before the module API table
+    exists. Assert at startup that no static module touched the API early.
+  - Static modules share one merged `ValkeyModule_*` pointer table (`__common__` symbols). Test Lua
+    and bloom loaded together.
+  - Binary grows about 4.4 MB stripped. Try `--gc-sections` and LTO and record the result.
 
-Order: inline values and the 16-byte value first, then a compact encoding for small documents on
-top, so the inline representation is written once.
+### Step 9: bloom tests
 
-Inline values invalidate cached `jsonValue *` on any container growth. The command layer has to
-address values by `(parent, index)` and re-resolve after mutation. `JSON.SET` multi-match,
-`ARR*`, `MERGE`, `CLEAR` and the arithmetic commands all hold refs across mutations. The harness
-polices this.
+- valkey-bloom's Python suite against a `BUILD_BLOOM=static` server with no `--loadmodule`.
+- Tcl test: start with `bf.*` configs in the conf file and a module-written bloom RDB fixture;
+  assert the server starts, data loads, and `CONFIG GET bf.*` returns the configured values.
+- Tcl test: `MODULE UNLOAD bloom` is refused.
 
-Compact encoding: zuiderkwast asked on #13 whether to use BSON or UBJSON instead of listpack.
-Listpack cannot hold nesting, so it is out. BSON loses on two requirements: it has no way to keep
-number source text and it stores objects as documents whose key order clients treat as incidental.
-Proposal: a small length-prefixed binary format modeled on UBJSON (type byte, length, payload,
-nested containers inline) with a number-text type, used below a size threshold and converted to
-the DOM above it, as small hashes convert from listpack.
+## Step 10: default static build
 
-Defrag comes last, once the layout is settled. It has to walk the DOM and reassign each parent's
-child pointer.
+Default `make` produces a server with native JSON and static bloom. Run the full gate once more on
+a clean `make distclean && make`, plus a smoke test of the installed binary: `JSON.SET`, `BF.ADD`,
+`SAVE`, restart, both keys present, `MODULE LIST` shows `bloom` and no JSON module.
 
-**This step gates enabling JSON in default builds.** Steps 1-7 can merge behind a build flag.
+## Decisions
 
-## Bloom: static module
-
-### 1. Vendor the source
-
-`src/modules/bloom/` holds valkey-bloom at a pinned release, its `Cargo.lock`, and `cargo vendor`
-output, so the build is offline and does not reach into the module repo (the constraint
-zuiderkwast set in #2657). An update is a vendor bump PR.
-
-### 2. Build flag
-
-`BUILD_BLOOM=no|module|static`, mirroring `BUILD_LUA` (`src/Makefile:303`) and
-`cmake/Modules/ValkeySetup.cmake`. `static` builds the crate as a `staticlib` and links it with
-`--whole-archive` and `--export-dynamic`, like `libvalkeylua.a`. On macOS, `-force_load`.
-
-Rust's std links statically, so unlike valkey-json this adds no `libstdc++` runtime dependency.
-
-### 3. Entry points
-
-Export `ValkeyModule_OnLoad_bloom` and `ValkeyModule_OnUnload_bloom` with `#[no_mangle]` and
-default visibility, which `moduleLoadStaticSymbol()` resolves by `dlsym` on the running binary
-(`src/module.c:13923`). Hidden visibility turns this into a startup panic rather than a link
-error, so CI must start the binary, not just link it.
-
-### 4. Startup ordering
-
-Lua loads at `src/server.c:8177`, after `moduleLoadFromQueue()` at `src/server.c:8164` has already
-exited on any unconsumed module config. Loading bloom at the same point means any `bf.bloom-*`
-line in a conf file kills startup. Bloom must load inside `moduleLoadFromQueue()`, before the
-leftover-config check, and in any case before `loadDataFromDisk()` (`src/server.c:8195`) so
-`bloomfltr` payloads in RDB and AOF resolve.
-
-### 5. Link hazards
-
-Each needs a fix or a test that fails without it:
-
-- `valkey-module` 0.1.14's `build.rs` reuses one `cc::Build` across two `compile()` calls, so the
-  staticlib carries two copies of `redismodule.o`. Harmless for a `cdylib`, a duplicate symbol
-  under `--whole-archive`. Fix upstream and carry the patch in the vendored crate until released.
-- Whole-archive linking runs the module's global constructors before `main()`, before the module
-  API table exists. A constructor calling `ValkeyModule_Alloc` crashes silently, while behaving
-  fine as a `.so`. Add a startup assertion and a rule that in-tree modules have no eager
-  constructors.
-- All static modules share one merged `ValkeyModule_*` pointer table (`__common__` symbols),
-  pinning them to one header vintage. Test Lua and bloom together.
-- Binary grows about 4.4 MB stripped, 1.7 MB more than the `.so`, because whole-archive defeats
-  dead-code elimination. Try `--gc-sections` and LTO and record the result.
-
-### 6. Tests
-
-- Run valkey-bloom's Python suite against a `BUILD_BLOOM=static` server with no `--loadmodule`.
-- Tcl test: start with `bf.*` configs in the conf file and a bloom RDB fixture; assert the server
-  starts, data loads, and `CONFIG GET bf.*` returns the configured values.
-- CI job per platform for `BUILD_BLOOM=static`.
-
-## Decisions for maintainers
-
-| decision | proposal |
+| decision | choice |
 |---|---|
-| `TYPE` on native JSON keys | keep `ReJSON-RL` for now; changing it breaks clients for a cosmetic gain |
-| keyspace event class | module fires `d`, native fires `j`; fire `j` and document that `Kd` subscribers must add `j` |
-| `BUILD_BLOOM` default | `no` until every CI platform has a Rust toolchain, then `static` |
-| Rust in the core build | accept it, scoped to `src/modules/bloom` and opt-in until the default flips |
+| `TYPE` on native JSON keys | keep `ReJSON-RL`; changing it breaks clients for a cosmetic gain |
+| keyspace event class | module fires `d`, native fires `j`; document that `Kd` subscribers must add `j` |
+| `BUILD_BLOOM` default | `static`; `BUILD_BLOOM=no` builds without a Rust toolchain |
 | Top-K, Cuckoo, Count-Min Sketch (#4374) | stay in the bloom module and ride the same static link |
-| compact JSON encoding | UBJSON-style binary format, above |
+
+## Follow-on, not required for a working build
+
+- **Memory parity.** Current gap is 1.0x to 1.79x the module for anything with a container.
+  Inline values in parent vectors, a 16-byte value, and interned member names reach parity
+  (16 B per array element, 24 B per member). Inline values invalidate cached `jsonValue *` on
+  container growth, so the command layer must address values by `(parent, index)`.
+- **Compact encoding.** zuiderkwast asked on #13 about BSON or UBJSON instead of listpack. Listpack
+  cannot hold nesting; BSON cannot keep number source text. Proposal: a length-prefixed binary
+  format modeled on UBJSON with a number-text type, for small documents, built after inline values
+  so the representation is written once.
+- **Defrag** for JSON, once the layout settles.
+- **`SharedJSON_Get`** re-export for valkey-search, verified against search's actual lookup.
 
 ## Out of scope
 
 - valkey-search: an index lifecycle, threading model and cluster coordination, not a data type.
 - valkey-ldap: an auth callback.
-- A native C bloom type. The bit-exact C primitive from the prototype stays available if that is
-  ever wanted.
-- `MODULE UNLOAD lua` permanently disabling scripting on a server with `enable-module-command yes`.
-  A real bug, filed separately.
+- A native C bloom type.
