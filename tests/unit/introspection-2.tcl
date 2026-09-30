@@ -344,8 +344,10 @@ start_server {tags {"introspection"}} {
         set type_groups [dict create string string list list set set sorted-set zset \
                                      hash hash stream stream pathhash pathhash]
         # Groups whose commands operate on the types above rather than adding one
-        # of their own, plus the groups that are not about keys at all.
-        set typeless_groups {bitmap cluster connection generic geo hyperloglog pubsub scripting server transactions}
+        # of their own, plus the groups that are not about keys at all. Commands of
+        # modules such as the static bloom module report group "module", and the
+        # fuzzer never creates module-type keys.
+        set typeless_groups {bitmap cluster connection generic geo hyperloglog module pubsub scripting server transactions}
 
         set supported [fuzzy_traffic_commands_by_type]
         set uncovered {}

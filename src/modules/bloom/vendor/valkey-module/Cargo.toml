@@ -258,6 +258,7 @@ version = "0.4"
 
 [dependencies.nix]
 version = "0.26"
+default-features = false
 
 [dependencies.num-traits]
 version = "^0.2"

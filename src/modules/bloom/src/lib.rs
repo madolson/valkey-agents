@@ -21,8 +21,21 @@ pub const MODULE_VERSION: i32 = 10001;
 // When the version is released the status will be "ga".
 pub const MODULE_RELEASE_STAGE: &str = "ga";
 
+// Not yet defined by valkey-module 0.1.14.
+const HANDLE_ATOMIC_SLOT_MIGRATION: i32 = 1 << 5;
+const HANDLE_FORKLESS: i32 = 1 << 6;
+
 fn initialize(ctx: &Context, _args: &[ValkeyString]) -> Status {
-    ctx.set_module_options(ModuleOptions::HANDLE_IO_ERRORS);
+    // The server disables atomic slot migration, swapdb async loading and
+    // forkless save while any loaded module lacks the matching option, and this
+    // module is loaded by default. Bloom qualifies for all three: it keeps no
+    // state tied to key ownership (only atomic metrics), opens only the key its
+    // commands declare, registers no aux_save, and its rdb_save only reads.
+    ctx.set_module_options(
+        ModuleOptions::HANDLE_IO_ERRORS
+            | ModuleOptions::HANDLE_REPL_ASYNC_LOAD
+            | ModuleOptions::from_bits_retain(HANDLE_ATOMIC_SLOT_MIGRATION | HANDLE_FORKLESS),
+    );
     let ver = ctx
         .get_server_version()
         .expect("Unable to get server version!");
@@ -142,4 +155,25 @@ valkey_module! {
         ],
         module_args_as_configuration: true,
     ]
+}
+
+// valkey-server resolves these by name when this crate is linked in statically
+// (`moduleLoadStatic("bf")`). The suffix must match MODULE_NAME, since the
+// server looks up the unload entry point by the registered module name.
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn ValkeyModule_OnLoad_bf(
+    ctx: *mut valkey_module::raw::RedisModuleCtx,
+    argv: *mut *mut valkey_module::raw::RedisModuleString,
+    argc: std::os::raw::c_int,
+) -> std::os::raw::c_int {
+    RedisModule_OnLoad(ctx, argv, argc)
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "C" fn ValkeyModule_OnUnload_bf(
+    ctx: *mut valkey_module::raw::RedisModuleCtx,
+) -> std::os::raw::c_int {
+    RedisModule_OnUnload(ctx)
 }

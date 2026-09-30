@@ -333,6 +333,35 @@ else
 	endif
 endif
 
+# Bloom filter module, the Rust crate vendored in modules/bloom. Building it
+# needs cargo, so BUILD_BLOOM=no is the only setting that doesn't.
+BLOOM_TARGET_DIR=modules/bloom/target/release
+ifeq ($(BUILD_BLOOM),no)
+	BLOOM_MODULE=
+	BLOOM_MODULE_INSTALL=
+	FINAL_CFLAGS+=-DSTATIC_BLOOM=0
+else ifeq ($(BUILD_BLOOM),module)
+	ifeq ($(uname_S),Darwin)
+		BLOOM_MODULE=$(BLOOM_TARGET_DIR)/libvalkey_bloom.dylib
+	else
+		BLOOM_MODULE=$(BLOOM_TARGET_DIR)/libvalkey_bloom.so
+	endif
+	BLOOM_MODULE_INSTALL=install-bloom-module
+	FINAL_CFLAGS+=-DSTATIC_BLOOM=0
+else
+	# The default: linking bloom into the server as a static module.
+	BLOOM_MODULE=$(BLOOM_TARGET_DIR)/libvalkey_bloom.a
+	BLOOM_MODULE_INSTALL=
+	FINAL_CFLAGS+=-DSTATIC_BLOOM=1
+	ifeq ($(uname_S),Darwin)
+		BLOOM_LDFLAGS=-Wl,-export_dynamic -Wl,-force_load,$(BLOOM_MODULE)
+	else ifeq ($(uname_S),FreeBSD)
+		BLOOM_LDFLAGS=-Wl,--export-dynamic -Wl,--whole-archive $(BLOOM_MODULE) -Wl,--no-whole-archive
+	else
+		BLOOM_LDFLAGS=-Wl,--whole-archive $(BLOOM_MODULE) -Wl,--no-whole-archive
+	endif
+endif
+
 # Determine systemd support and/or build preference (defaulting to auto-detection)
 BUILD_WITH_SYSTEMD=no
 LIBSYSTEMD_LIBS=-lsystemd
@@ -709,7 +738,7 @@ endif
 
 DEPENDENCY_TARGETS+= gtest-parallel
 
-ALL_BUILD_PREREQUISITES=$(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME) $(ENGINE_CHECK_RDB_NAME) $(ENGINE_CHECK_AOF_NAME) $(TLS_MODULE) $(RDMA_MODULE)
+ALL_BUILD_PREREQUISITES=$(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME) $(ENGINE_CHECK_RDB_NAME) $(ENGINE_CHECK_AOF_NAME) $(TLS_MODULE) $(RDMA_MODULE) $(BLOOM_MODULE)
 
 all: $(ALL_BUILD_PREREQUISITES)
 	@echo ""
@@ -741,6 +770,7 @@ persist-settings: distclean
 	echo ZSTD_PREFIX=$(ZSTD_PREFIX) >> .make-settings
 	echo USE_SYSTEMD=$(USE_SYSTEMD) >> .make-settings
 	echo BUILD_LUA=$(BUILD_LUA) >> .make-settings
+	echo BUILD_BLOOM=$(BUILD_BLOOM) >> .make-settings
 	echo USE_LIBBACKTRACE=$(USE_LIBBACKTRACE) >> .make-settings
 	echo LIBBACKTRACE_PREFIX=$(LIBBACKTRACE_PREFIX) >> .make-settings
 	echo CFLAGS=$(CFLAGS) >> .make-settings
@@ -769,8 +799,8 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
 endif
 
 # valkey-server
-$(SERVER_NAME): $(ENGINE_SERVER_OBJ) $(LUA_MODULE)
-	$(SERVER_LD) -o $@ $(ENGINE_SERVER_OBJ) ../deps/libvalkey/lib/libvalkey.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a ../deps/lz4/liblz4.a $(FINAL_LIBS) $(LUA_LDFLAGS)
+$(SERVER_NAME): $(ENGINE_SERVER_OBJ) $(LUA_MODULE) $(if $(BLOOM_LDFLAGS),$(BLOOM_MODULE))
+	$(SERVER_LD) -o $@ $(ENGINE_SERVER_OBJ) ../deps/libvalkey/lib/libvalkey.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a ../deps/lz4/liblz4.a $(BLOOM_LDFLAGS) $(FINAL_LIBS) $(LUA_LDFLAGS)
 
 # Valkey static library, used to compile against for unit testing
 $(ENGINE_LIB_NAME): $(ENGINE_SERVER_OBJ)
@@ -800,6 +830,14 @@ $(RDMA_MODULE_NAME): $(SERVER_NAME)
 # engine_lua.so
 $(LUA_MODULE_NAME): .make-prerequisites
 	$(MAKE) -C modules/lua OPTIMIZATION="$(OPTIMIZATION)" BUILD_LUA="$(BUILD_LUA)"
+
+# Cargo tracks the crate's own inputs, so it runs on every build and leaves the
+# library untouched when nothing changed.
+$(BLOOM_MODULE): .make-prerequisites FORCE
+	$(MAKE) -C modules/bloom BUILD_BLOOM="$(BUILD_BLOOM)"
+
+FORCE:
+.PHONY: FORCE
 
 # valkey-cli
 $(ENGINE_CLI_NAME): $(ENGINE_CLI_OBJ)
@@ -839,6 +877,7 @@ clean:
 	rm -rf $(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME) $(ENGINE_CHECK_RDB_NAME) $(ENGINE_CHECK_AOF_NAME) $(ENGINE_UNIT_GTESTS) $(ENGINE_LIB_NAME) trace/*.o trace/*.d *.o *.gcda *.gcno *.gcov valkey.info lcov-html Makefile.dep *.so
 	rm -f $(DEP)
 	-(cd modules/lua && $(MAKE) clean)
+	-(cd modules/bloom && $(MAKE) clean)
 
 .PHONY: clean
 
@@ -904,7 +943,7 @@ valgrind:
 helgrind:
 	$(MAKE) OPTIMIZATION="-O0" MALLOC="libc" CFLAGS="-D__ATOMIC_VAR_FORCE_SYNC_MACROS" SERVER_CFLAGS="-I/usr/local/include" SERVER_LDFLAGS="-L/usr/local/lib"
 
-install: all $(LUA_MODULE_INSTALL)
+install: all $(LUA_MODULE_INSTALL) $(BLOOM_MODULE_INSTALL)
 	@mkdir -p $(INSTALL_BIN)
 	$(call MAKE_INSTALL,$(SERVER_NAME),$(INSTALL_BIN))
 	$(call MAKE_INSTALL,$(ENGINE_BENCHMARK_NAME),$(INSTALL_BIN))
@@ -922,6 +961,10 @@ install: all $(LUA_MODULE_INSTALL)
 install-lua-module: $(LUA_MODULE)
 	@mkdir -p $(INSTALL_LIB)
 	$(call MAKE_INSTALL,$(LUA_MODULE),$(INSTALL_LIB))
+
+install-bloom-module: $(BLOOM_MODULE)
+	@mkdir -p $(INSTALL_LIB)
+	$(call MAKE_INSTALL,$(BLOOM_MODULE),$(INSTALL_LIB))
 
 uninstall:
 	@rm -f $(INSTALL_BIN)/{$(SERVER_NAME),$(ENGINE_BENCHMARK_NAME),$(ENGINE_CLI_NAME),$(ENGINE_CHECK_RDB_NAME),$(ENGINE_CHECK_AOF_NAME),$(ENGINE_SENTINEL_NAME)}

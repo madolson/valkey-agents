@@ -57,15 +57,16 @@ fn main() {
     const RM_EXPERIMENTAL_API: &str = "REDISMODULE_EXPERIMENTAL_API";
     const VM_EXPERIMENTAL_API: &str = "VALKEYMODULE_EXPERIMENTAL_API";
 
-    let mut build = cc::Build::new();
-
-    build
+    // Each archive gets its own cc::Build. Reusing one Build accumulates files, so the second
+    // archive would carry another copy of redismodule.o, a duplicate symbol when the staticlib is
+    // linked with --whole-archive.
+    cc::Build::new()
         .define(RM_EXPERIMENTAL_API, None)
         .file("src/redismodule.c")
         .include("src/include/")
         .compile("redismodule");
 
-    build
+    cc::Build::new()
         .define(VM_EXPERIMENTAL_API, None)
         .file("src/valkeymodule.c")
         .include("src/include/")
