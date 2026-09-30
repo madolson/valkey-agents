@@ -1,0 +1,35 @@
+[
+  {
+    "id": "arity-error-case",
+    "reason": "Module commands report their registered upper-case name in arity errors; native commands report the lower-case table name.",
+    "cmd": ".*",
+    "mode": "casefold",
+    "reply": "^-ERR wrong number of arguments for '[^']*' command\r\n$"
+  },
+  {
+    "id": "object-encoding",
+    "reason": "A module type has no encoding name; a native type does.",
+    "cmd": "^OBJECT$",
+    "sub": "^ENCODING$",
+    "mode": "ignore"
+  },
+  {
+    "id": "memory-usage",
+    "reason": "Memory figures depend on the in-memory layout, not behaviour.",
+    "cmd": "^MEMORY$",
+    "mode": "ignore"
+  },
+  {
+    "id": "json-debug-memory",
+    "reason": "Memory figures depend on the in-memory layout. Reply shape still has to match.",
+    "cmd": "^JSON\\.DEBUG$",
+    "sub": "^(MEMORY|MAX-SIZE-KEY)$",
+    "mode": "mask-integers"
+  },
+  {
+    "id": "hello",
+    "reason": "HELLO lists the loaded modules and the server version.",
+    "cmd": "^HELLO$",
+    "mode": "ignore"
+  }
+]
