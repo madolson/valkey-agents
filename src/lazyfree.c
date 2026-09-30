@@ -120,6 +120,13 @@ void lazyfreeResetStats(void) {
     atomic_store_explicit(&lazyfreed_objects, 0, memory_order_relaxed);
 }
 
+/* If there are enough allocations to free the value object asynchronously, it
+ * may be put into a lazy free list instead of being freed synchronously. The
+ * lazy free list will be reclaimed in a different bio.c thread. If the value is
+ * composed of a few allocations, to free in a lazy way is actually just
+ * slower... So under a certain limit we just free the object synchronously. */
+#define LAZYFREE_THRESHOLD 64
+
 /* Return the amount of work needed in order to free an object.
  * The return value is not always the actual number of allocations the
  * object is composed of, but a number proportional to it.
@@ -175,6 +182,8 @@ size_t lazyfreeGetFreeEffort(robj *key, robj *obj, int dbid) {
     } else if (obj->type == OBJ_PATH_HASH) {
         pathHashObject *path_hash = objectGetVal(obj);
         return path_hash->index->numnodes + path_hash->num_fields;
+    } else if (obj->type == OBJ_JSON) {
+        return jsonTypeFreeEffort(obj, LAZYFREE_THRESHOLD + 1);
     } else if (obj->type == OBJ_MODULE) {
         size_t effort = moduleGetFreeEffort(key, obj, dbid);
         /* If the module's free_effort returns 0, we will use asynchronous free
@@ -184,13 +193,6 @@ size_t lazyfreeGetFreeEffort(robj *key, robj *obj, int dbid) {
         return 1; /* Everything else is a single allocation. */
     }
 }
-
-/* If there are enough allocations to free the value object asynchronously, it
- * may be put into a lazy free list instead of being freed synchronously. The
- * lazy free list will be reclaimed in a different bio.c thread. If the value is
- * composed of a few allocations, to free in a lazy way is actually just
- * slower... So under a certain limit we just free the object synchronously. */
-#define LAZYFREE_THRESHOLD 64
 
 /* Free an object, if the object is huge enough, free it in async way. */
 void freeObjAsync(robj *key, robj *obj, int dbid) {

@@ -615,6 +615,7 @@ ENGINE_SERVER_OBJ = \
     syncio.o \
     syscheck.o \
     t_hash.o \
+    t_json.o \
     t_list.o \
     t_path_hash.o \
     t_set.o \

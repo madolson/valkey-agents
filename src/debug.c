@@ -275,6 +275,8 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
         streamIteratorStop(&si);
     } else if (objectGetType(o) == OBJ_PATH_HASH) {
         pathHashTypeDigest(digest, o);
+    } else if (objectGetType(o) == OBJ_JSON) {
+        jsonTypeDigest(digest, o);
     } else if (objectGetType(o) == OBJ_MODULE) {
         ValkeyModuleDigest md = {{0}, {0}, keyobj, db->id};
         moduleValue *mv = objectGetVal(o);
@@ -842,6 +844,19 @@ void debugCommand(client *c) {
             decrRefCount(key);
         }
         addReply(c, shared.ok);
+    } else if (!strcasecmp(objectGetVal(c->argv[1]), "json-set") && c->argc == 4) {
+        /* DEBUG JSON-SET <key> <json>. Undocumented test hook that creates a
+         * JSON key until the JSON commands exist. */
+        sds text = objectGetVal(c->argv[3]);
+        int err;
+        jsonValue *root = jsonParse(text, sdslen(text), JSON_DEFAULT_MAX_DEPTH, &err, NULL);
+        if (root == NULL) {
+            addReplyError(c, jsonErrorMessage(err));
+            return;
+        }
+        robj *val = createJsonObject(root);
+        setKey(c, c->db, c->argv[2], &val, 0);
+        addReply(c, shared.ok);
     } else if (!strcasecmp(objectGetVal(c->argv[1]), "digest") && c->argc == 2) {
         /* DEBUG DIGEST (form without keys specified) */
         unsigned char digest[20];
@@ -1267,6 +1282,8 @@ void serverLogObjectDebugInfo(const robj *o) {
     } else if (objectGetType(o) == OBJ_PATH_HASH) {
         serverLog(LL_WARNING, "Path hash path count: %llu",
                   (unsigned long long)raxSize(((pathHashObject *)objectGetVal(o))->index));
+    } else if (objectGetType(o) == OBJ_JSON) {
+        serverLog(LL_WARNING, "JSON top level children: %zu", jsonChildCount(objectGetVal(o)));
     }
 #endif
 }

@@ -5569,11 +5569,11 @@ void addReplyCommandArgList(client *c, struct serverCommandArg *args, int num_ar
 
 #ifdef LOG_REQ_RES
 
-void addReplyJson(client *c, struct jsonObject *rs) {
+void addReplyJson(client *c, struct replySchemaObject *rs) {
     addReplyMapLen(c, rs->length);
 
     for (int i = 0; i < rs->length; i++) {
-        struct jsonObjectElement *curr = &rs->elements[i];
+        struct replySchemaElement *curr = &rs->elements[i];
         addReplyBulkCString(c, curr->key);
         switch (curr->type) {
         case (JSON_TYPE_BOOLEAN): addReplyBool(c, curr->value.boolean); break;
@@ -5583,7 +5583,7 @@ void addReplyJson(client *c, struct jsonObject *rs) {
         case (JSON_TYPE_ARRAY):
             addReplyArrayLen(c, curr->value.array.length);
             for (int k = 0; k < curr->value.array.length; k++) {
-                struct jsonObject *object = curr->value.array.objects[k];
+                struct replySchemaObject *object = curr->value.array.objects[k];
                 addReplyJson(c, object);
             }
             break;

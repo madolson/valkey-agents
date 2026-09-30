@@ -4449,6 +4449,7 @@ int VM_KeyType(ValkeyModuleKey *key) {
     case OBJ_MODULE: return VALKEYMODULE_KEYTYPE_MODULE;
     case OBJ_STREAM: return VALKEYMODULE_KEYTYPE_STREAM;
     case OBJ_PATH_HASH: return VALKEYMODULE_KEYTYPE_PATH_HASH;
+    case OBJ_JSON: return VALKEYMODULE_KEYTYPE_JSON;
     default: return VALKEYMODULE_KEYTYPE_EMPTY;
     }
 }
@@ -4468,6 +4469,7 @@ size_t VM_ValueLength(ValkeyModuleKey *key) {
     case OBJ_HASH: return hashTypeLength(key->value);
     case OBJ_STREAM: return streamLength(key->value);
     case OBJ_PATH_HASH: return raxSize(((pathHashObject *)objectGetVal(key->value))->index);
+    case OBJ_JSON: return jsonChildCount(objectGetVal(key->value));
     default: return 0;
     }
 }

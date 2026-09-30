@@ -171,7 +171,7 @@ char *rdb_type_string[] = {
 static_assert(sizeof(rdb_type_string) / sizeof(rdb_type_string[0]) == RDB_TYPE_LAST, "Mismatch between enum and string table");
 
 char *type_name[OBJ_TYPE_MAX] = {"string", "list", "set", "zset", "hash", "module", /* module type is special */
-                                 "stream", "pathhash"};
+                                 "stream", "pathhash", "json"};
 
 /********************** Rdb stats **********************/
 void statsRecordCount(size_t eleCount, rdbStats *stats) {

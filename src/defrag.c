@@ -715,6 +715,8 @@ static void defragKey(defragKeysCtx *ctx, robj **elemref) {
         defragStream(ob);
     } else if (ob->type == OBJ_PATH_HASH) {
         /* Path hash payload defragmentation is intentionally deferred. */
+    } else if (ob->type == OBJ_JSON) {
+        /* JSON defragmentation is deferred until the value layout settles. */
     } else if (ob->type == OBJ_MODULE) {
         defragModule(db, ob);
     } else {

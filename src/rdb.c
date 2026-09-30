@@ -790,6 +790,7 @@ int rdbGetObjectType(robj *o, int rdbver) {
             return RDB_TYPE_PATH_HASH;
         else
             return -1; /* can't be stored in old RDB */
+    case OBJ_JSON: serverPanic("JSON keys cannot be serialized yet");
     case OBJ_MODULE: return RDB_TYPE_MODULE_2;
     default: serverPanic("Unknown object type");
     }

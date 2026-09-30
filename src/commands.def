@@ -25,6 +25,7 @@ const char *COMMAND_GROUP_STR[] = {
     "stream",
     "bitmap",
     "pathhash",
+    "json",
     "module"
 };
 

@@ -39,6 +39,7 @@ GROUPS = {
     "stream": "COMMAND_GROUP_STREAM",
     "bitmap": "COMMAND_GROUP_BITMAP",
     "pathhash": "COMMAND_GROUP_PATH_HASH",
+    "json": "COMMAND_GROUP_JSON",
 }
 
 
@@ -383,18 +384,18 @@ class ReplySchema(object):
                     schema.write(f)
                 name = to_c_name("%s_%s" % (self.name, k))
                 f.write("/* %s array reply schema */\n" % name)
-                f.write("struct jsonObject *%s[] = {\n" % name)
+                f.write("struct replySchemaObject *%s[] = {\n" % name)
                 for i, schema in enumerate(v):
                     f.write("&%s,\n" % schema.name)
                 f.write("};\n\n")
             
         f.write("/* %s reply schema */\n" % self.name)
-        f.write("struct jsonObjectElement %s_elements[] = {\n" % self.name)
+        f.write("struct replySchemaElement %s_elements[] = {\n" % self.name)
         for k, v in self.schema.items():
             name = to_c_name("%s_%s" % (self.name, k))
             f.write("{%s},\n" % struct_code(name, k, v))
         f.write("};\n\n")
-        f.write("struct jsonObject %s = {%s_elements,.length=%d};\n\n" % (self.name, self.name, len(self.schema)))
+        f.write("struct replySchemaObject %s = {%s_elements,.length=%d};\n\n" % (self.name, self.name, len(self.schema)))
 
 
 class Command(object):
@@ -434,14 +435,14 @@ class Command(object):
         return visit_args(self.args, 1)
 
     def fullname(self):
-        return self.name.replace("-", "_").replace(":", "")
+        return self.name.replace("-", "_").replace(":", "").replace(".", "_")
 
     def return_types_table_name(self):
         return "%s_ReturnInfo" % self.fullname().replace(" ", "_")
 
     def subcommand_table_name(self):
         assert self.subcommands
-        return "%s_Subcommands" % self.name
+        return "%s_Subcommands" % self.fullname().replace(" ", "_")
 
     def history_table_name(self):
         return "%s_History" % (self.fullname().replace(" ", "_"))
@@ -626,7 +627,8 @@ class Subcommand(Command):
         super(Subcommand, self).__init__(name, desc)
 
     def fullname(self):
-        return "%s %s" % (self.container_name, self.name.replace("-", "_").replace(":", ""))
+        return "%s %s" % (self.container_name.replace(".", "_"),
+                          self.name.replace("-", "_").replace(":", "").replace(".", "_"))
 
 
 def create_command(name, desc):
@@ -718,6 +720,7 @@ const char *COMMAND_GROUP_STR[] = {
     "stream",
     "bitmap",
     "pathhash",
+    "json",
     "module"
 };
 
