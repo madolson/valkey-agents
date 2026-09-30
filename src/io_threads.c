@@ -51,6 +51,10 @@ static size_t io_jobs_submitted;
 static _Atomic(size_t) io_jobs_finished;
 static size_t cluster_io_pending_responses;
 static int io_threads_initialized = 0;
+/* Set once the process is going away and the main thread will never consume
+ * io_shared_outbox again. Workers use it to stop retrying a blocking flush that
+ * can no longer make progress. */
+static _Atomic int io_threads_exiting = 0;
 _Atomic long long used_active_time_io_thread[IO_THREADS_MAX_NUM] = {0};
 
 /* Job Types for Tagged Pointers
@@ -279,7 +283,9 @@ static void flushPendingIOResponsesList(list **pending_list, mpscQueue *outbox, 
         /* Try to enqueue. If blocking is set, retry until success. */
         do {
             pushed = mpscEnqueue(outbox, job, ticket);
-            if (pushed || !blocking || server.crashed) break; /* On server crash we kill the IO threads, no point in sending back jobs to the main-thread. */
+            /* On server crash or process exit we kill the IO threads, no point in sending back jobs to the main-thread. */
+            if (pushed || !blocking || server.crashed) break;
+            if (atomic_load_explicit(&io_threads_exiting, memory_order_acquire)) break;
             atomic_thread_fence(memory_order_acquire);
         } while (true);
 
@@ -306,6 +312,15 @@ void cleanupThreadResources(void *dummy) {
 
     /* Blocking flush: ensure all pending jobs are sent before thread dies */
     flushPendingIOResponses(1);
+
+    /* The flush gives up early when there is no consumer left, so the backlog
+     * lists it did not drain are still allocated. Nothing will read them. */
+    for (int i = 0; i < JOB_PRIORITY_COUNT; i++) {
+        if (pending_io_responses[i]) {
+            listRelease(pending_io_responses[i]);
+            pending_io_responses[i] = NULL;
+        }
+    }
 
     /* Free the shared query buffer */
     freeSharedQueryBuf();
@@ -476,10 +491,40 @@ static void shutdownIOThread(int id) {
         serverLog(LL_NOTICE, "IO thread(tid:%lu) terminated", (unsigned long)tid);
     }
     pthread_mutex_destroy(&io_threads_mutex[id]);
+
+    /* The worker is joined, so the main thread owns this inbox outright now.
+     * tryOffloadFreeArgvToIOThreads() batches jobs into it without committing,
+     * so a client that pipelined writes ahead of SHUTDOWN can leave argv in here
+     * that only this queue points at. Run those jobs before the buffer goes
+     * away. Skipped when crashing, where allocator work is worse than leaking.
+     * On the CONFIG SET path drainIOThreadsQueue() ran first and this finds
+     * nothing. */
+    if (!server.crashed) {
+        spscCommit(&io_private_inbox[id]);
+        void *batch[BATCH_SIZE];
+        size_t batch_count;
+        size_t drained = 0;
+        while ((batch_count = spscDequeueBatch(&io_private_inbox[id], batch, BATCH_SIZE)) > 0) {
+            for (size_t i = 0; i < batch_count; i++) {
+                void *data;
+                int type;
+                untagJob(batch[i], &data, &type);
+                if (type == JOB_SPSC_FREE_ARGV) ioThreadFreeArgv((robj **)data);
+            }
+            drained += batch_count;
+        }
+        if (drained) atomic_fetch_add_explicit(&io_jobs_finished, drained, memory_order_release);
+    }
+
     spscFree(&io_private_inbox[id]);
 }
 
 void killIOThreads(void) {
+    /* Both callers are one-way trips out of the process: the crash handler and
+     * finishShutdown(). The main thread is about to sit in pthread_join() and
+     * will not drain io_shared_outbox again, so tell the workers to stop
+     * retrying their blocking flush. */
+    atomic_store_explicit(&io_threads_exiting, 1, memory_order_release);
     for (int j = 1; j < server.io_threads_num; j++) { /* We don't kill thread 0, which is the main thread. */
         shutdownIOThread(j);
     }
