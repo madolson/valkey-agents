@@ -1,0 +1,25 @@
+[package]
+name = "bloomfilter"
+version = "3.0.2"
+authors = ["Frank Denis <github@pureftpd.org>"]
+description = "Bloom filter for space-efficient probabilistic set membership tests with configurable false-positive rates"
+license = "ISC"
+homepage = "https://github.com/jedisct1/rust-bloom-filter"
+repository = "https://github.com/jedisct1/rust-bloom-filter"
+edition = "2018"
+keywords = ["bloom", "bloom-filter", "probabilistic", "membership", "filter"]
+readme = "README.md"
+
+[target.'cfg(all(any(target_arch = "wasm32", target_arch = "wasm64"), target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", optional = true, features = ["js"] }
+
+[target.'cfg(not(all(any(target_arch = "wasm32", target_arch = "wasm64"), target_os = "unknown")))'.dependencies]
+getrandom = { version = "0.2", optional = true }
+
+[dependencies]
+siphasher = "1.0.3"
+
+[features]
+default = ["random"]
+random = ["getrandom"]
+serde = ["siphasher/serde_std"]

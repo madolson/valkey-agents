@@ -1,0 +1,32 @@
+[badges.travis-ci]
+repository = "cryptocorrosion/cryptocorrosion"
+
+[dependencies.zerocopy]
+features = ["simd"]
+version = "0.8.23"
+
+[features]
+default = ["std"]
+no_simd = []
+simd = []
+std = []
+
+[lib]
+path = "src/lib.rs"
+
+[package]
+authors = ["The CryptoCorrosion Contributors"]
+autobenches = false
+autobins = false
+autoexamples = false
+autotests = false
+categories = ["cryptography", "no-std"]
+description = "Cross-platform cryptography-oriented low-level SIMD library."
+edition = "2021"
+keywords = ["crypto", "simd", "x86"]
+license = "MIT OR Apache-2.0"
+name = "ppv-lite86"
+readme = false
+repository = "https://github.com/cryptocorrosion/cryptocorrosion"
+rust-version = "1.61"
+version = "0.2.21"

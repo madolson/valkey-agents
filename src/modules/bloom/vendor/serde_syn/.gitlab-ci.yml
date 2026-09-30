@@ -1,0 +1,31 @@
+stages:
+  - test
+  - deploy
+
+.tests_template: &tests_template
+  stage: test
+  script:
+    - cargo test --verbose --jobs 1
+    - cargo check --examples
+
+tests:stable:
+  image: rustdocker/rust:stable
+  <<: *tests_template
+
+tests:nightly:
+  image: rustdocker/rust:nightly
+  <<: *tests_template
+
+pages:
+  image: rustdocker/rust:stable
+  stage: deploy
+  only:
+    - master
+  script:
+    - cargo doc --no-deps
+    - rm -rf public
+    - mkdir public
+    - cp -R target/doc/* public
+  artifacts:
+    paths:
+    - public

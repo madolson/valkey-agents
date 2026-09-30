@@ -1,0 +1,39 @@
+[dependencies.getrandom]
+optional = true
+version = "0.2"
+
+[dependencies.serde]
+features = ["derive"]
+optional = true
+version = "1"
+
+[features]
+alloc = []
+serde1 = ["serde"]
+std = ["alloc", "getrandom", "getrandom/std"]
+
+[lib]
+path = "src/lib.rs"
+
+[package]
+authors = ["The Rand Project Developers", "The Rust Project Developers"]
+categories = ["algorithms", "no-std"]
+description = """
+Core random number generator traits and tools for implementation.
+"""
+documentation = "https://docs.rs/rand_core"
+edition = "2018"
+homepage = "https://rust-random.github.io/book"
+keywords = ["random", "rng"]
+license = "MIT OR Apache-2.0"
+name = "rand_core"
+readme = "README.md"
+repository = "https://github.com/rust-random/rand"
+version = "0.6.4"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "doc_cfg"]
+
+[package.metadata.playground]
+all-features = true

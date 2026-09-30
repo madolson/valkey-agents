@@ -1,0 +1,42 @@
+[dependencies]
+
+[features]
+default = ["std"]
+std = []
+unstable = []
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+rust_2018_idioms = "warn"
+single_use_lifetimes = "warn"
+unreachable_pub = "warn"
+
+[lints.rust.unexpected_cfgs]
+check-cfg = ["cfg(futures_sanitizer)"]
+level = "warn"
+priority = 0
+
+[package]
+autobenches = false
+autobins = false
+autoexamples = false
+autolib = false
+autotests = false
+description = """
+The `AsyncRead`, `AsyncWrite`, `AsyncSeek`, and `AsyncBufRead` traits for the futures-rs library.
+"""
+edition = "2018"
+homepage = "https://rust-lang.github.io/futures-rs"
+license = "MIT OR Apache-2.0"
+name = "futures-io"
+readme = "README.md"
+repository = "https://github.com/rust-lang/futures-rs"
+rust-version = "1.36"
+version = "0.3.34"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

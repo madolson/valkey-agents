@@ -1,0 +1,45 @@
+[dependencies]
+
+[dev-dependencies]
+
+[features]
+alloc = []
+cfg-target-has-atomic = []
+default = ["std"]
+std = ["alloc"]
+unstable = []
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+rust_2018_idioms = "warn"
+single_use_lifetimes = "warn"
+unreachable_pub = "warn"
+
+[lints.rust.unexpected_cfgs]
+check-cfg = ["cfg(futures_sanitizer)"]
+level = "warn"
+priority = 0
+
+[package]
+autobenches = false
+autobins = false
+autoexamples = false
+autolib = false
+autotests = false
+description = """
+Tools for working with tasks.
+"""
+edition = "2018"
+homepage = "https://rust-lang.github.io/futures-rs"
+license = "MIT OR Apache-2.0"
+name = "futures-task"
+readme = "README.md"
+repository = "https://github.com/rust-lang/futures-rs"
+rust-version = "1.71"
+version = "0.3.34"
+
+[package.metadata.docs.rs]
+all-features = true
