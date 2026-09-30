@@ -79,3 +79,24 @@ dependencies on Linux.
 2. `cargo generate-lockfile`, then rerun the `cargo vendor-filterer` command above.
 3. Reapply the two `vendor/valkey-module` patches and their checksums, or drop them if upstream
    fixed them. Regenerate the vendor entries in the top-level `REUSE.toml`.
+4. Regenerate `tests/assets/bloom-module.rdb` if the RDB format changed (see
+   `tests/unit/type/bloom.tcl` for what it must contain).
+
+## Running the upstream Python suite
+
+The Tcl tests are `tests/unit/type/bloom.tcl`. Upstream's pytest suite runs against the static
+server with one change: drop `'loadmodule': os.getenv('MODULE_PATH'),` from the server args in
+`tests/valkey_bloom_test_case.py` and `tests/test_bloom_replication.py`. Then, from a checkout of
+the same tag:
+
+```
+mkdir -p tests/build/binaries/unstable tests/build/valkeytestframework
+ln -s /path/to/valkey/src/valkey-server tests/build/binaries/unstable/valkey-server
+cp -r /path/to/valkey-test-framework/src/* tests/build/valkeytestframework/
+pip install pytest==7.4.3 valkey
+cd tests && SERVER_VERSION=unstable python3 -m pytest -v .
+```
+
+At 1.0.1, 88 of 90 pass. Both parameterizations of
+`test_rdb_restore_non_bloom_compatibility` fail by design: they start a second server without
+`loadmodule` and expect bloom to be absent, which a static build cannot provide.
