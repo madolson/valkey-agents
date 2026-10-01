@@ -1,0 +1,43 @@
+[dependencies.proc-macro2]
+version = "1.0.60"
+
+[dependencies.quote]
+version = "1.0"
+
+[dependencies.syn]
+features = ["full"]
+version = "3.0"
+
+[features]
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+rust_2018_idioms = "warn"
+single_use_lifetimes = "warn"
+unreachable_pub = "warn"
+
+[lints.rust.unexpected_cfgs]
+check-cfg = ["cfg(futures_sanitizer)"]
+level = "warn"
+priority = 0
+
+[package]
+autobenches = false
+autobins = false
+autoexamples = false
+autolib = false
+autotests = false
+description = """
+The futures-rs procedural macro implementations.
+"""
+edition = "2018"
+homepage = "https://rust-lang.github.io/futures-rs"
+license = "MIT OR Apache-2.0"
+name = "futures-macro"
+readme = false
+repository = "https://github.com/rust-lang/futures-rs"
+rust-version = "1.71"
+version = "0.3.34"

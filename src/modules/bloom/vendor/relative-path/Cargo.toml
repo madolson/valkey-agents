@@ -1,0 +1,34 @@
+[dependencies.serde]
+optional = true
+version = "1.0.160"
+
+[dev-dependencies.anyhow]
+version = "1.0.76"
+
+[dev-dependencies.serde]
+features = ["derive"]
+version = "1.0.160"
+
+[features]
+default = []
+
+[lib]
+path = "src/lib.rs"
+
+[package]
+authors = ["John-John Tedro <udoprog@tedro.se>"]
+categories = ["filesystem"]
+description = "Portable, relative paths for Rust."
+documentation = "https://docs.rs/relative-path"
+edition = "2021"
+homepage = "https://github.com/udoprog/relative-path"
+keywords = ["path"]
+license = "MIT OR Apache-2.0"
+name = "relative-path"
+readme = "README.md"
+repository = "https://github.com/udoprog/relative-path"
+rust-version = "1.66"
+version = "1.9.3"
+
+[package.metadata.docs.rs]
+all-features = true

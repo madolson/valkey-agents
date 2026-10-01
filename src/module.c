@@ -13491,6 +13491,15 @@ void moduleLoadFromQueue(void) {
         moduleLoadQueueEntryFree(loadmod);
         listDelNode(server.loadmodule_queue, ln);
     }
+#if STATIC_BLOOM
+    /* Bloom loads here, not next to Lua, so that its bf.* configs are consumed
+     * before the unused configuration check below and its data type exists
+     * before data is loaded. An explicit loadmodule of bloom takes precedence. */
+    if (moduleLookupByName("bf") == NULL && moduleLoadStatic("bf", NULL, 0, 0) != C_OK) {
+        serverLog(LL_WARNING, "Can't load static module bf. Server aborting.");
+        exit(1);
+    }
+#endif
     if (dictSize(server.module_configs_queue)) {
         dictIterator *di = dictGetSafeIterator(server.module_configs_queue);
         dictEntry *de;

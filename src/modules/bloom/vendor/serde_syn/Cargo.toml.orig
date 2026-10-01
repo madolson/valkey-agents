@@ -1,0 +1,37 @@
+[package]
+name = "serde_syn"
+version = "0.1.0"
+authors = ["Sam Sartor <sam@sketchup.com>"]
+edition = "2018"
+
+description = "Use serde to parse Rust source code."
+documentation = "https://docs.rs/serde-syn"
+homepage = "https://gitlab.com/samsartor/serde_syn"
+repository = "https://gitlab.com/samsartor/serde_syn"
+readme = "README.md"
+keywords = ["syn", "serde", "procmacro", "derive"]
+categories = ["development-tools::procedural-macro-helpers", "parsing", "parser-implementations"]
+license = "MIT"
+
+exclude = [
+    "examples/*.rs",
+]
+
+[badges]
+gitlab = { repository = "samsartor/serde_syn" }
+
+[dependencies]
+syn = { version = "1.0", features = ["extra-traits"] }
+serde = "1.0"
+proc-macro2 = "1.0"
+bitflags = "1.1"
+
+[dev-dependencies]
+serde_derive = "1.0"
+serde_bytes = "0.11"
+# yaml_macros = { path = "examples/yaml_macros" }
+# field_list_macros = { path = "examples/field_list_macros" }
+quote = "1.0"
+
+[workspace]
+members = ["examples/yaml_macros", "examples/field_list_macros"]

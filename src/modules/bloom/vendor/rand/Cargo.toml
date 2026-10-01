@@ -1,0 +1,70 @@
+[dependencies.rand_chacha]
+default-features = false
+optional = true
+version = "0.3.0"
+
+[dependencies.rand_core]
+version = "0.6.0"
+
+[dependencies.serde]
+features = ["derive"]
+optional = true
+version = "1.0.103"
+
+[dev-dependencies.bincode]
+version = "1.2.1"
+
+[dev-dependencies.rand_pcg]
+version = "0.3.0"
+
+[dev-dependencies.serde_json]
+version = "1.0.99"
+
+[features]
+alloc = ["rand_core/alloc"]
+default = ["std", "std_rng"]
+getrandom = ["rand_core/getrandom"]
+log = []
+min_const_gen = []
+nightly = []
+serde1 = ["serde", "rand_core/serde1"]
+small_rng = []
+std = ["rand_core/std", "rand_chacha/std", "alloc", "getrandom", "libc"]
+std_rng = ["rand_chacha"]
+
+[lib]
+path = "src/lib.rs"
+
+[package]
+authors = ["The Rand Project Developers", "The Rust Project Developers"]
+autobenches = false
+autobins = false
+autoexamples = false
+autolib = false
+autotests = false
+categories = ["algorithms", "no-std"]
+description = """
+Random number generators and other randomness functionality.
+"""
+documentation = "https://docs.rs/rand"
+edition = "2018"
+homepage = "https://rust-random.github.io/book"
+include = ["src/", "LICENSE-*", "README.md", "CHANGELOG.md", "COPYRIGHT"]
+keywords = ["random", "rng"]
+license = "MIT OR Apache-2.0"
+name = "rand"
+readme = "README.md"
+repository = "https://github.com/rust-random/rand"
+version = "0.8.8"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--generate-link-to-definition"]
+
+[package.metadata.playground]
+features = ["small_rng", "serde1"]
+
+[target."cfg(unix)".dependencies.libc]
+default-features = false
+optional = true
+version = "0.2.22"

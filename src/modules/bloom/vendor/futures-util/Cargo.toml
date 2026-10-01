@@ -1,0 +1,126 @@
+[dependencies.futures-channel]
+default-features = false
+features = ["std"]
+optional = true
+version = "0.3.34"
+
+[dependencies.futures-core]
+default-features = false
+version = "0.3.34"
+
+[dependencies.futures-io]
+default-features = false
+features = ["std"]
+optional = true
+version = "0.3.34"
+
+[dependencies.futures-macro]
+default-features = false
+optional = true
+version = "=0.3.34"
+
+[dependencies.futures-sink]
+default-features = false
+optional = true
+version = "0.3.34"
+
+[dependencies.futures-task]
+default-features = false
+version = "0.3.34"
+
+[dependencies.futures_01]
+optional = true
+package = "futures"
+version = "0.1.25"
+
+[dependencies.libc]
+optional = true
+version = "0.2.26"
+
+[dependencies.memchr]
+optional = true
+version = "2.2"
+
+[dependencies.pin-project-lite]
+version = "0.2.6"
+
+[dependencies.portable-atomic-util]
+default-features = false
+optional = true
+version = "0.2.7"
+
+[dependencies.portable_atomic_crate]
+default-features = false
+optional = true
+package = "portable-atomic"
+version = "1.13.1"
+
+[dependencies.slab]
+default-features = false
+optional = true
+version = "0.4.7"
+
+[dependencies.spin]
+optional = true
+version = "0.12.0"
+
+[dependencies.tokio-io]
+optional = true
+version = "0.1.9"
+
+[dev-dependencies.tokio]
+version = "0.1.11"
+
+[features]
+alloc = ["futures-core/alloc", "futures-task/alloc", "slab"]
+async-await = []
+async-await-macro = ["async-await", "futures-macro"]
+bilock = []
+cfg-target-has-atomic = []
+channel = ["std", "futures-channel"]
+compat = ["std", "futures_01", "libc"]
+default = ["std", "async-await", "async-await-macro"]
+io = ["std", "futures-io", "memchr"]
+io-compat = ["io", "compat", "tokio-io", "libc"]
+portable-atomic = ["futures-core/portable-atomic", "portable_atomic_crate"]
+portable-atomic-alloc = ["portable-atomic-util/alloc", "portable-atomic"]
+sink = ["futures-sink"]
+std = ["alloc", "futures-core/std", "futures-task/std", "slab/std"]
+unstable = ["futures-core/unstable", "futures-task/unstable"]
+write-all-vectored = ["io"]
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+rust_2018_idioms = "warn"
+single_use_lifetimes = "warn"
+unreachable_pub = "warn"
+
+[lints.rust.unexpected_cfgs]
+check-cfg = ["cfg(futures_sanitizer)"]
+level = "warn"
+priority = 0
+
+[package]
+autobenches = false
+autobins = false
+autoexamples = false
+autolib = false
+autotests = false
+description = """
+Common utilities and extension traits for the futures-rs library.
+"""
+edition = "2018"
+homepage = "https://rust-lang.github.io/futures-rs"
+license = "MIT OR Apache-2.0"
+name = "futures-util"
+readme = "README.md"
+repository = "https://github.com/rust-lang/futures-rs"
+rust-version = "1.71"
+version = "0.3.34"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

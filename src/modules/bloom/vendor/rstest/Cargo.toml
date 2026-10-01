@@ -1,0 +1,71 @@
+[build-dependencies.rustc_version]
+version = "0.4.1"
+
+[dependencies.futures]
+optional = true
+version = "0.3.30"
+
+[dependencies.futures-timer]
+optional = true
+version = "3.0.3"
+
+[dependencies.rstest_macros]
+default-features = false
+version = "0.23.0"
+
+[dev-dependencies.actix-rt]
+version = "2.9.0"
+
+[dev-dependencies.async-std]
+features = ["attributes"]
+version = "1.13.0"
+
+[dev-dependencies.lazy_static]
+version = "1.5.0"
+
+[dev-dependencies.mytest]
+default-features = false
+package = "rstest"
+version = "0.22.0"
+
+[dev-dependencies.pretty_assertions]
+version = "1.4.1"
+
+[dev-dependencies.temp_testdir]
+version = "0.2.3"
+
+[dev-dependencies.tokio]
+features = ["rt", "macros"]
+version = "1.38.1"
+
+[dev-dependencies.unindent]
+version = "0.2.3"
+
+[features]
+async-timeout = ["dep:futures", "dep:futures-timer", "rstest_macros/async-timeout"]
+crate-name = ["rstest_macros/crate-name"]
+default = ["async-timeout", "crate-name"]
+
+[lib]
+path = "src/lib.rs"
+
+[package]
+authors = ["Michele d'Amico <michele.damico@gmail.com>"]
+autobenches = false
+autobins = false
+autoexamples = false
+autotests = false
+categories = ["development-tools::testing"]
+description = """
+Rust fixture based test framework. It use procedural macro
+to implement fixtures and table based tests.
+"""
+edition = "2021"
+homepage = "https://github.com/la10736/rstest"
+keywords = ["test", "fixture"]
+license = "MIT OR Apache-2.0"
+name = "rstest"
+readme = "README.md"
+repository = "https://github.com/la10736/rstest"
+rust-version = "1.67.1"
+version = "0.23.0"

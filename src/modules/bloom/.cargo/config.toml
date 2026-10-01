@@ -1,0 +1,12 @@
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+
+# Whole-archive linking keeps every object in the staticlib. LTO first drops
+# the Rust code the module never reaches, roughly halving what it adds to
+# valkey-server, and internalizes Rust symbols so -rdynamic doesn't export them.
+[profile.release]
+lto = true
+codegen-units = 1
