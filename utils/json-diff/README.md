@@ -96,13 +96,20 @@ case-insensitive regexes, with one of these modes:
   errors name `JSON.SET` for a module command and `json.set` natively).
 - `mask-integers`: integer replies are masked before comparing, so the shape
   still has to match (`JSON.DEBUG MEMORY`, `MAX-SIZE-KEY`).
+- `prefix`: B's reply is a strict prefix of A's (A wrote extra replies).
+- `pair`: A's reply matches the regex `a` and B's matches `b`.
+
+The last two excuse the deliberate differences from the module, which are
+behaviour, not layout; each rule's `reason` says why native differs. See
+"Reference module bugs found" below.
 
 Counts of excused replies are printed per rule.
 
 ## Not covered
 
 - `JSON.DEBUG KEYTABLE-*`, `TEST-SHARED-API` and `HELP`: module internals the
-  native type does not have.
+  native type does not have. Natively the first two are unknown subcommands and
+  `HELP` does not list them.
 - `JSON.DEBUG MAX-DEPTH-KEY` and `MAX-SIZE-KEY` only run with a single key,
   since ties are broken by keyspace iteration order.
 - Keyspace notifications, replication and persistence. `mkfixture.py` writes
@@ -121,3 +128,9 @@ Both 1.0.3 and `unstable` `58faf1c`:
   of random documents; `numbers.jsonl` covers the non-crashing forms.
 - Legacy `JSON.RESP` on a recursive path writes more replies than the command
   owns (see framing above).
+
+Native JSON does not reproduce either. A NaN result from `JSON.NUMMULTBY` or
+`JSON.NUMINCRBY` is refused with the `OVERFLOW` error an infinite result gets,
+for every path; with a `$` path the module instead stores `-nan`, which is not
+JSON. Legacy `JSON.RESP` replies once, for the first match. The allowlist rules
+`nan-arithmetic`, `nan-document` and `legacy-resp-extra-replies` excuse these.

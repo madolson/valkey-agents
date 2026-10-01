@@ -1,0 +1,14 @@
+{
+    "MAX-DEPTH-KEY": {
+        "summary": "Returns the deepest document in the database and its depth.",
+        "complexity": "O(N) where N is the number of values in the database.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": 2,
+        "container": "JSON.DEBUG",
+        "function": "jsonDebugMaxDepthKeyCommand",
+        "acl_categories": [
+            "SLOW"
+        ]
+    }
+}

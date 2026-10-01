@@ -342,7 +342,7 @@ start_server {tags {"introspection"}} {
 
         # COMMAND DOCS group -> type name reported by TYPE.
         set type_groups [dict create string string list list set set sorted-set zset \
-                                     hash hash stream stream pathhash pathhash]
+                                     hash hash stream stream pathhash pathhash json ReJSON-RL]
         # Groups whose commands operate on the types above rather than adding one
         # of their own, plus the groups that are not about keys at all. Commands of
         # modules such as the static bloom module report group "module", and the

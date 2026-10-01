@@ -844,29 +844,6 @@ void debugCommand(client *c) {
             decrRefCount(key);
         }
         addReply(c, shared.ok);
-    } else if (!strcasecmp(objectGetVal(c->argv[1]), "json-set") && c->argc == 4) {
-        /* DEBUG JSON-SET <key> <json>. Undocumented test hook that creates a
-         * JSON key until the JSON commands exist. */
-        sds text = objectGetVal(c->argv[3]);
-        int err;
-        jsonValue *root = jsonParse(text, sdslen(text), JSON_DEFAULT_MAX_DEPTH, &err, NULL);
-        if (root == NULL) {
-            addReplyError(c, jsonErrorMessage(err));
-            return;
-        }
-        robj *val = createJsonObject(root);
-        setKey(c, c->db, c->argv[2], &val, 0);
-        addReply(c, shared.ok);
-    } else if (!strcasecmp(objectGetVal(c->argv[1]), "json-get") && c->argc == 3) {
-        /* DEBUG JSON-GET <key>. Undocumented test hook that replies with the
-         * compact serialization of a JSON key. */
-        robj *o = lookupKeyRead(c->db, c->argv[2]);
-        if (o == NULL) {
-            addReplyNull(c);
-            return;
-        }
-        if (checkType(c, o, OBJ_JSON)) return;
-        addReplyBulkSds(c, jsonSerialize(sdsempty(), objectGetVal(o), NULL, 0));
     } else if (!strcasecmp(objectGetVal(c->argv[1]), "digest") && c->argc == 2) {
         /* DEBUG DIGEST (form without keys specified) */
         unsigned char digest[20];

@@ -1,0 +1,76 @@
+{
+    "JSON.GET": {
+        "summary": "Returns the JSON serialization of the values at one or more paths.",
+        "complexity": "O(N) where N is the size of the values returned.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": -2,
+        "function": "jsonGetCommand",
+        "command_flags": [
+            "READONLY",
+            "FAST"
+        ],
+        "acl_categories": [
+            "JSON",
+            "READ",
+            "FAST"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO",
+                    "ACCESS"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "indent",
+                "type": "string",
+                "token": "INDENT",
+                "optional": true
+            },
+            {
+                "name": "newline",
+                "type": "string",
+                "token": "NEWLINE",
+                "optional": true
+            },
+            {
+                "name": "space",
+                "type": "string",
+                "token": "SPACE",
+                "optional": true
+            },
+            {
+                "name": "noescape",
+                "type": "pure-token",
+                "token": "NOESCAPE",
+                "optional": true
+            },
+            {
+                "name": "path",
+                "type": "string",
+                "optional": true,
+                "multiple": true
+            }
+        ]
+    }
+}

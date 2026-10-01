@@ -43,7 +43,9 @@ class Allowlist(object):
                     r["_cmd"] = re.compile(r["cmd"], re.I)
                     r["_sub"] = re.compile(r["sub"], re.I) if "sub" in r else None
                     r["_reply"] = re.compile(r["reply"].encode(), re.I | re.S) if "reply" in r else None
-                    if r["mode"] not in ("ignore", "casefold", "mask-integers"):
+                    for side in ("a", "b"):
+                        r["_" + side] = re.compile(r[side].encode(), re.S) if side in r else None
+                    if r["mode"] not in ("ignore", "casefold", "mask-integers", "prefix", "pair"):
                         raise ValueError("unknown allowlist mode %r" % r["mode"])
                     self.rules.append(r)
 
@@ -65,6 +67,12 @@ class Allowlist(object):
             elif mode == "mask-integers":
                 pat = re.compile(rb"^:-?\d+\r\n", re.M)
                 if pat.sub(b":N\r\n", ra) == pat.sub(b":N\r\n", rb):
+                    return r["id"]
+            elif mode == "prefix":
+                if rb and len(rb) < len(ra) and ra.startswith(rb):
+                    return r["id"]
+            elif mode == "pair":
+                if r["_a"].search(ra) and r["_b"].search(rb):
                     return r["id"]
         return None
 

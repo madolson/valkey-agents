@@ -31,5 +31,27 @@
     "reason": "HELLO lists the loaded modules and the server version.",
     "cmd": "^HELLO$",
     "mode": "ignore"
+  },
+  {
+    "id": "nan-arithmetic",
+    "reason": "Deliberate difference. Infinity times zero (or infinities of opposite sign added) is NaN. The module stores it as the text -nan, which is not JSON and makes the document unloadable, and asserts and kills the server when the path is legacy. Native refuses the operation with the OVERFLOW error an infinite result gets, for every path.",
+    "cmd": "^JSON\\.NUM(MULT|INCR)BY$",
+    "mode": "pair",
+    "a": "^\\$\\d+\\r\\n\\[.*null.*\\]\\r\\n$",
+    "b": "^-OVERFLOW "
+  },
+  {
+    "id": "nan-document",
+    "reason": "Follows from nan-arithmetic: the module's document now holds NaN, which JSON.GET prints as a bare nan token and JSON.RESP as 2.696539702293474e308. The native document kept its value.",
+    "cmd": ".*",
+    "mode": "pair",
+    "a": "(^|[\\[,:\\n])-?nan([\\]},\\r]|$)|2\\.696539702293474e308",
+    "b": ""
+  },
+  {
+    "id": "legacy-resp-extra-replies",
+    "reason": "Deliberate difference. For a legacy path with several matches the module writes one top-level reply per match, more replies than the command owns, which desynchronises every client. Native replies once, for the first match, as other legacy reads do. That reply is the start of what the module sends.",
+    "cmd": "^JSON\\.RESP$",
+    "mode": "prefix"
   }
 ]

@@ -1,0 +1,41 @@
+{
+    "DEPTH": {
+        "summary": "Returns the maximum nesting depth of a document.",
+        "complexity": "O(N) where N is the number of values in the document.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": 3,
+        "container": "JSON.DEBUG",
+        "function": "jsonDebugDepthCommand",
+        "acl_categories": [
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO",
+                    "ACCESS"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 2
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            }
+        ]
+    }
+}

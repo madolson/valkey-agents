@@ -49,7 +49,8 @@ typedef enum {
     CMD_GROUP_BITMAP = 9,
     CMD_GROUP_PUBSUB = 10,
     CMD_GROUP_GENERIC = 11,
-    CMD_GROUP_PATH_HASH = 12
+    CMD_GROUP_PATH_HASH = 12,
+    CMD_GROUP_JSON = 13
 } CommandGroupType;
 
 typedef enum {
@@ -219,6 +220,7 @@ static CommandGroupType mapGroupType(const sds groupStr) {
         {"geo", CMD_GROUP_GEO},
         {"bitmap", CMD_GROUP_BITMAP},
         {"pathhash", CMD_GROUP_PATH_HASH},
+        {"json", CMD_GROUP_JSON},
         {"pubsub", CMD_GROUP_PUBSUB},
         {"generic", CMD_GROUP_GENERIC},
         {NULL, CMD_GROUP_UNKNOWN}};
@@ -1182,13 +1184,16 @@ static void addKeysToCommand(FuzzerCommand *cmd, int numkeys, CommandArgument *a
         case CMD_GROUP_PATH_HASH:
             keyPrefix = "pathhash";
             break;
+        case CMD_GROUP_JSON:
+            keyPrefix = "json";
+            break;
         case CMD_GROUP_PUBSUB:
             keyPrefix = "channel";
             break;
         case CMD_GROUP_GENERIC: {
             /* For generic commands, randomly select one of the key types */
             static const char *keyTypes[] = {
-                "string", "list", "set", "hash", "zset", "stream", "hll", "geo", "bitmap", "key"};
+                "string", "list", "set", "hash", "zset", "stream", "hll", "geo", "bitmap", "json", "key"};
             int randomTypeIndex = rand() % (sizeof(keyTypes) / sizeof(keyTypes[0]));
             keyPrefix = keyTypes[randomTypeIndex];
         } break;

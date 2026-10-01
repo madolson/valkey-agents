@@ -1,0 +1,70 @@
+{
+    "JSON.ARRINDEX": {
+        "summary": "Returns the index of the first element equal to a value in the arrays at a path.",
+        "complexity": "O(N) where N is the number of elements searched.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": -4,
+        "function": "jsonArrindexCommand",
+        "command_flags": [
+            "READONLY",
+            "FAST"
+        ],
+        "acl_categories": [
+            "JSON",
+            "READ",
+            "FAST"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO",
+                    "ACCESS"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "path",
+                "type": "string"
+            },
+            {
+                "name": "value",
+                "type": "string"
+            },
+            {
+                "name": "range",
+                "type": "block",
+                "optional": true,
+                "arguments": [
+                    {
+                        "name": "start",
+                        "type": "integer"
+                    },
+                    {
+                        "name": "stop",
+                        "type": "integer",
+                        "optional": true
+                    }
+                ]
+            }
+        ]
+    }
+}

@@ -1,0 +1,54 @@
+{
+    "JSON.MERGE": {
+        "summary": "Merges a JSON value into the values at a path, following RFC 7396.",
+        "complexity": "O(N) where N is the size of the values merged.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": 4,
+        "function": "jsonMergeCommand",
+        "command_flags": [
+            "WRITE",
+            "DENYOOM"
+        ],
+        "acl_categories": [
+            "JSON",
+            "WRITE",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "UPDATE"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "path",
+                "type": "string"
+            },
+            {
+                "name": "json",
+                "type": "string"
+            }
+        ]
+    }
+}

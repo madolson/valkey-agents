@@ -1,0 +1,50 @@
+{
+    "JSON.STRLEN": {
+        "summary": "Returns the length of the strings at a path.",
+        "complexity": "O(N) where N is the number of values the path matches.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": -2,
+        "function": "jsonStrlenCommand",
+        "command_flags": [
+            "READONLY",
+            "FAST"
+        ],
+        "acl_categories": [
+            "JSON",
+            "READ",
+            "FAST"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RO"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "path",
+                "type": "string",
+                "optional": true
+            }
+        ]
+    }
+}

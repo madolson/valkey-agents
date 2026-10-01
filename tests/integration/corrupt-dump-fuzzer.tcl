@@ -51,6 +51,7 @@ proc generate_types {} {
     # create other non-collection types
     r incr int
     r set string str
+    r json.set json . {{"a":[1,2.5,"x",true,null],"b":{"c":{}}}}
 
     # create bigger objects with 10 items (more than a single ziplist / listpack)
     generate_collections big 10

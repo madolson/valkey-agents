@@ -1,0 +1,55 @@
+{
+    "JSON.NUMINCRBY": {
+        "summary": "Adds a number to the numbers at a path.",
+        "complexity": "O(N) where N is the number of values the path matches.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": 4,
+        "function": "jsonNumincrbyCommand",
+        "command_flags": [
+            "WRITE",
+            "FAST"
+        ],
+        "acl_categories": [
+            "JSON",
+            "WRITE",
+            "FAST"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "ACCESS",
+                    "UPDATE"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "path",
+                "type": "string"
+            },
+            {
+                "name": "number",
+                "type": "string"
+            }
+        ]
+    }
+}

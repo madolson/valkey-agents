@@ -1,0 +1,14 @@
+{
+    "HELP": {
+        "summary": "Returns helpful text about the different subcommands.",
+        "complexity": "O(1)",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": 2,
+        "container": "JSON.DEBUG",
+        "function": "jsonDebugHelpCommand",
+        "acl_categories": [
+            "SLOW"
+        ]
+    }
+}
