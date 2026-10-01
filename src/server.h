@@ -2389,6 +2389,10 @@ struct valkeyServer {
     size_t hll_sparse_max_bytes;
     size_t stream_node_max_bytes;
     long long stream_node_max_entries;
+    /* JSON parameters, named after the valkey-json module configs they replace. */
+    long long json_max_document_size; /* json.max-document-size, 0 is unlimited. */
+    long long json_max_path_limit;    /* json.max-path-limit, maximum nesting depth. */
+    int json_debug_mode;              /* json.debug-mode, accepted for compatibility. */
     /* List parameters */
     int list_max_listpack_size;
     int list_compress_depth;
@@ -3863,6 +3867,7 @@ robj *jsonTypeDup(robj *o);
 size_t jsonTypeMemUsage(robj *o);
 void jsonTypeDigest(unsigned char *digest, robj *o);
 size_t jsonTypeFreeEffort(robj *o, size_t limit);
+sds genJsonInfoString(sds info);
 
 /* Pub / Sub */
 int pubsubUnsubscribeAllChannels(client *c, int notify);
@@ -3938,6 +3943,7 @@ void rewriteConfigMarkAsProcessed(struct rewriteConfigState *state, const char *
 int rewriteConfig(char *path, int force_write);
 void initConfigValues(void);
 void removeConfig(sds name);
+int configNameExists(sds name);
 sds getConfigDebugInfo(void);
 int allowProtectedAction(int config, client *c);
 void updateSharedObjectsWithCompat(void);

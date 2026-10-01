@@ -23,13 +23,16 @@ int setBoolConfigCommand(const char *name, int new, void *privdata, ValkeyModule
     return VALKEYMODULE_ERR;
 }
 
-/* No arguments are expected */ 
+/* With any argument, the bool config is registered as json.max-path-limit,
+ * which is a server config. The API isn't usable before Init, so the
+ * argument's value is not read. */
 int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
     VALKEYMODULE_NOT_USED(argv);
-    VALKEYMODULE_NOT_USED(argc);
-    if (ValkeyModule_Init(ctx, "configs", 1, VALKEYMODULE_APIVER_1) == VALKEYMODULE_ERR) return VALKEYMODULE_ERR;
+    const char *module_name = argc ? "json" : "configs";
+    const char *config_name = argc ? "max-path-limit" : "test";
+    if (ValkeyModule_Init(ctx, module_name, 1, VALKEYMODULE_APIVER_1) == VALKEYMODULE_ERR) return VALKEYMODULE_ERR;
 
-    if (ValkeyModule_RegisterBoolConfig(ctx, "test", 1, VALKEYMODULE_CONFIG_DEFAULT, getBoolConfigCommand, setBoolConfigCommand, NULL, &argc) == VALKEYMODULE_ERR) {
+    if (ValkeyModule_RegisterBoolConfig(ctx, config_name, 1, VALKEYMODULE_CONFIG_DEFAULT, getBoolConfigCommand, setBoolConfigCommand, NULL, &argc) == VALKEYMODULE_ERR) {
         return VALKEYMODULE_ERR;
     }
     if (ValkeyModule_LoadConfigs(ctx) == VALKEYMODULE_ERR) {

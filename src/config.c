@@ -3495,6 +3495,7 @@ standardConfig static_configs[] = {
     createBoolConfig("lua-enable-insecure-api", "lua-enable-deprecated-api", MODIFIABLE_CONFIG | HIDDEN_CONFIG | PROTECTED_CONFIG, server.lua_enable_insecure_api, 0, NULL, updateLuaEnableInsecureApi),
     createBoolConfig("import-mode", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.import_mode, 0, NULL, NULL),
     createBoolConfig("io-threads-always-active", NULL, MODIFIABLE_CONFIG | HIDDEN_CONFIG, server.io_threads_always_active, 0, NULL, NULL),
+    createBoolConfig("json.debug-mode", NULL, IMMUTABLE_CONFIG | HIDDEN_CONFIG, server.json_debug_mode, 0, NULL, NULL),
 
     /* String Configs */
     createStringConfig("aclfile", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.acl_filename, "", NULL, NULL),
@@ -3649,6 +3650,8 @@ standardConfig static_configs[] = {
     createLongLongConfig("stream-node-max-entries", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.stream_node_max_entries, 100, INTEGER_CONFIG, NULL, NULL),
     createLongLongConfig("repl-backlog-size", NULL, MODIFIABLE_CONFIG, 1, LLONG_MAX, server.repl_backlog_size, 10 * 1024 * 1024, MEMORY_CONFIG, NULL, updateReplBacklogSize), /* Default: 10mb */
     createLongLongConfig("cluster-manual-failover-timeout", NULL, MODIFIABLE_CONFIG, 1, INT_MAX, server.cluster_mf_timeout, 5000, INTEGER_CONFIG, NULL, NULL),
+    createLongLongConfig("json.max-document-size", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.json_max_document_size, 0, MEMORY_CONFIG, NULL, NULL),
+    createLongLongConfig("json.max-path-limit", NULL, MODIFIABLE_CONFIG, 0, JSON_MAX_DEPTH_LIMIT, server.json_max_path_limit, JSON_DEFAULT_MAX_DEPTH, INTEGER_CONFIG, NULL, NULL),
 
     /* Unsigned Long Long configs */
     createULongLongConfig("maxmemory", NULL, MODIFIABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
@@ -3762,6 +3765,11 @@ void initConfigValues(void) {
             serverAssert(ret);
         }
     }
+}
+
+/* Return 1 if a standard or module config is registered under name. */
+int configNameExists(sds name) {
+    return lookupConfig(name) != NULL;
 }
 
 /* Remove a config by name from the configs dict. */

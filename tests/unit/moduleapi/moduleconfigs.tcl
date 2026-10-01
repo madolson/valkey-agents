@@ -179,6 +179,17 @@ start_server {tags {"modules"}} {
         r module unload configs
     }
 
+    test {Module config named like a server config is refused} {
+        catch {r module load $testmoduletwo collide} e
+        assert_match {*ERR*} $e
+        assert_equal [lsearch [lmap x [r module list] {dict get $x name}] json] -1
+        verify_log_message 0 "*json.max-path-limit is a server configuration*" 0
+        # The failed load must not unregister the server's config.
+        r config set json.max-path-limit 64
+        assert_equal [r config get json.max-path-limit] "json.max-path-limit 64"
+        r config set json.max-path-limit 128
+    }
+
     test {test config rewrite with dynamic load} {
         #translates to: super \0secret password
         r module loadex $testmodule CONFIG moduleconfigs.string \x73\x75\x70\x65\x72\x20\x00\x73\x65\x63\x72\x65\x74\x20\x70\x61\x73\x73\x77\x6f\x72\x64 ARGS

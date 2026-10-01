@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,24 +20,47 @@
 #include "zmalloc.h"
 
 /* ----------------------------------------------------------------------------
+ * Memory accounting
+ *
+ * jsonUsedMemory() is the total size of all live values. Each outermost call
+ * into this file that allocates or frees adds the change in the calling
+ * thread's allocator counter, so single allocations cost nothing extra. Calls
+ * made inside it, such as the parser creating values, are covered by the
+ * outer measurement. So every exported function that allocates or frees value
+ * memory must run inside jsonTrackBegin() and jsonTrackEnd(), and must not
+ * allocate anything else that outlives the call. Values are freed on the
+ * lazyfree thread too.
+ * ------------------------------------------------------------------------- */
+
+static _Atomic size_t json_used_memory = 0;
+static _Thread_local int json_track_depth = 0;
+
+size_t jsonUsedMemory(void) {
+    return atomic_load_explicit(&json_used_memory, memory_order_relaxed);
+}
+
+static inline size_t jsonTrackBegin(void) {
+    return json_track_depth++ == 0 ? zmalloc_thread_used_memory() : 0;
+}
+
+static inline void jsonTrackEnd(size_t before) {
+    if (--json_track_depth == 0) {
+        atomic_fetch_add_explicit(&json_used_memory, zmalloc_thread_used_memory() - before, memory_order_relaxed);
+    }
+}
+
+/* ----------------------------------------------------------------------------
  * Values
  * ------------------------------------------------------------------------- */
 
+/* Unaccounted constructors, for the parser and the public ones below. */
 static jsonValue *jsonNew(jsonType type) {
     jsonValue *v = zcalloc(sizeof(*v));
     v->type = type;
     return v;
 }
 
-jsonValue *jsonCreateNull(void) {
-    return jsonNew(JSON_NULL);
-}
-
-jsonValue *jsonCreateBool(int b) {
-    return jsonNew(b ? JSON_TRUE : JSON_FALSE);
-}
-
-jsonValue *jsonCreateInteger(int64_t i) {
+static jsonValue *jsonNewInteger(int64_t i) {
     jsonValue *v = jsonNew(JSON_INTEGER);
     v->integer = i;
     return v;
@@ -52,26 +76,58 @@ static double jsonStrtod(sds text) {
     return d;
 }
 
-jsonValue *jsonCreateNumber(const char *text, size_t len) {
+static jsonValue *jsonNewNumber(const char *text, size_t len) {
     jsonValue *v = jsonNew(JSON_NUMBER);
     v->number.text = sdsnewlen(text, len);
     v->number.value = jsonStrtod(v->number.text);
     return v;
 }
 
+static jsonValue *jsonNewTracked(jsonType type) {
+    size_t mem = jsonTrackBegin();
+    jsonValue *v = jsonNew(type);
+    jsonTrackEnd(mem);
+    return v;
+}
+
+jsonValue *jsonCreateNull(void) {
+    return jsonNewTracked(JSON_NULL);
+}
+
+jsonValue *jsonCreateBool(int b) {
+    return jsonNewTracked(b ? JSON_TRUE : JSON_FALSE);
+}
+
+jsonValue *jsonCreateInteger(int64_t i) {
+    jsonValue *v = jsonNewTracked(JSON_INTEGER);
+    v->integer = i;
+    return v;
+}
+
+jsonValue *jsonCreateNumber(const char *text, size_t len) {
+    size_t mem = jsonTrackBegin();
+    jsonValue *v = jsonNewNumber(text, len);
+    jsonTrackEnd(mem);
+    return v;
+}
+
 jsonValue *jsonCreateString(const char *s, size_t len) {
+    size_t mem = jsonTrackBegin();
     jsonValue *v = jsonNew(JSON_STRING);
     v->string = sdsnewlen(s, len);
+    jsonTrackEnd(mem);
     return v;
 }
 
 jsonValue *jsonCreateArray(void) {
-    return jsonNew(JSON_ARRAY);
+    return jsonNewTracked(JSON_ARRAY);
 }
 
 jsonValue *jsonCreateObject(void) {
-    return jsonNew(JSON_OBJECT);
+    return jsonNewTracked(JSON_OBJECT);
 }
+
+static void jsonFreeValue(jsonValue *v);
 
 static void jsonFreeContents(jsonValue *v) {
     size_t i;
@@ -79,13 +135,13 @@ static void jsonFreeContents(jsonValue *v) {
     case JSON_NUMBER: sdsfree(v->number.text); break;
     case JSON_STRING: sdsfree(v->string); break;
     case JSON_ARRAY:
-        for (i = 0; i < v->array.len; i++) jsonFree(v->array.items[i]);
+        for (i = 0; i < v->array.len; i++) jsonFreeValue(v->array.items[i]);
         zfree(v->array.items);
         break;
     case JSON_OBJECT:
         for (i = 0; i < v->object.len; i++) {
             sdsfree(v->object.members[i].name);
-            jsonFree(v->object.members[i].value);
+            jsonFreeValue(v->object.members[i].value);
         }
         zfree(v->object.members);
         zfree(v->object.index);
@@ -94,22 +150,31 @@ static void jsonFreeContents(jsonValue *v) {
     }
 }
 
-void jsonFree(jsonValue *v) {
-    if (v == NULL) return;
+static void jsonFreeValue(jsonValue *v) {
     jsonFreeContents(v);
     zfree(v);
+}
+
+void jsonFree(jsonValue *v) {
+    if (v == NULL) return;
+    size_t mem = jsonTrackBegin();
+    jsonFreeValue(v);
+    jsonTrackEnd(mem);
 }
 
 /* Replace the contents of dst with src, keeping dst's address, and free the
  * src shell. Pointers to dst stay valid, pointers to src do not. src must not
  * be part of dst. */
 void jsonReplace(jsonValue *dst, jsonValue *src) {
+    size_t mem = jsonTrackBegin();
     jsonFreeContents(dst);
     *dst = *src;
     zfree(src);
+    jsonTrackEnd(mem);
 }
 
 jsonValue *jsonDup(const jsonValue *v) {
+    size_t mem = jsonTrackBegin();
     jsonValue *d = zmalloc(sizeof(*d));
     *d = *v;
     size_t i;
@@ -135,6 +200,7 @@ jsonValue *jsonDup(const jsonValue *v) {
         break;
     default: break;
     }
+    jsonTrackEnd(mem);
     return d;
 }
 
@@ -211,7 +277,9 @@ void jsonArrayAppend(jsonValue *arr, jsonValue *v) {
 void jsonArrayInsert(jsonValue *arr, size_t idx, jsonValue *v) {
     jsonArray *a = &arr->array;
     assert(arr->type == JSON_ARRAY && idx <= a->len);
+    size_t mem = jsonTrackBegin();
     jsonArrayReserve(a, a->len + 1);
+    jsonTrackEnd(mem);
     memmove(a->items + idx + 1, a->items + idx, sizeof(jsonValue *) * (a->len - idx));
     a->items[idx] = v;
     a->len++;
@@ -236,7 +304,9 @@ jsonValue *jsonArrayDetach(jsonValue *arr, size_t idx) {
 void jsonArrayDeleteRange(jsonValue *arr, size_t idx, size_t count) {
     jsonArray *a = &arr->array;
     assert(arr->type == JSON_ARRAY && idx <= a->len && count <= a->len - idx);
+    size_t mem = jsonTrackBegin();
     for (size_t i = idx; i < idx + count; i++) jsonFree(a->items[i]);
+    jsonTrackEnd(mem);
     memmove(a->items + idx, a->items + idx + count, sizeof(jsonValue *) * (a->len - idx - count));
     a->len -= count;
 }
@@ -345,7 +415,9 @@ void jsonObjectSet(jsonValue *obj, const char *name, size_t len, jsonValue *v) {
         jsonFree(obj->object.members[p].value);
         obj->object.members[p].value = v;
     } else {
+        size_t mem = jsonTrackBegin();
         jsonMemberAppend(&obj->object, sdsnewlen(name, len), v);
+        jsonTrackEnd(mem);
     }
 }
 
@@ -353,8 +425,10 @@ void jsonObjectDeleteAt(jsonValue *obj, size_t pos) {
     jsonObject *o = &obj->object;
     assert(obj->type == JSON_OBJECT && pos < o->len);
     if (o->index) jsonIndexRemove(o, pos);
+    size_t mem = jsonTrackBegin();
     sdsfree(o->members[pos].name);
     jsonFree(o->members[pos].value);
+    jsonTrackEnd(mem);
     memmove(o->members + pos, o->members + pos + 1, sizeof(jsonMember) * (o->len - pos - 1));
     o->len--;
 }
@@ -632,9 +706,9 @@ static jsonValue *jsonParseNumber(jsonParser *P) {
     }
 
     P->p = p;
-    if (is_double) return jsonCreateNumber(s, p - s);
+    if (is_double) return jsonNewNumber(s, p - s);
     /* -0 is the integer 0. */
-    return jsonCreateInteger(minus ? (int64_t)(0 - i64) : (int64_t)i64);
+    return jsonNewInteger(minus ? (int64_t)(0 - i64) : (int64_t)i64);
 }
 
 static int jsonParseLiteral(jsonParser *P, const char *lit, size_t len) {
@@ -679,7 +753,7 @@ static jsonValue *jsonParseArray(jsonParser *P) {
         }
     }
 
-    jsonValue *arr = jsonCreateArray();
+    jsonValue *arr = jsonNew(JSON_ARRAY);
     size_t n = P->sp - base;
     if (n) {
         arr->array.items = zmalloc(sizeof(jsonValue *) * n);
@@ -691,7 +765,7 @@ static jsonValue *jsonParseArray(jsonParser *P) {
     return arr;
 
 fail:
-    while (P->sp > base) jsonFree(P->stack[--P->sp]);
+    while (P->sp > base) jsonFreeValue(P->stack[--P->sp]);
     return NULL;
 }
 
@@ -726,7 +800,7 @@ static jsonValue *jsonParseObject(jsonParser *P) {
         }
     }
 
-    jsonValue *obj = jsonCreateObject();
+    jsonValue *obj = jsonNew(JSON_OBJECT);
     jsonObject *o = &obj->object;
     size_t n = (P->sp - base) / 2;
     if (n) {
@@ -739,7 +813,7 @@ static jsonValue *jsonParseObject(jsonParser *P) {
         jsonValue *v = P->stack[base + 2 * i + 1];
         ssize_t pos = jsonMemberPos(o, name, sdslen(name));
         if (pos >= 0) {
-            jsonFree(o->members[pos].value);
+            jsonFreeValue(o->members[pos].value);
             o->members[pos].value = v;
             sdsfree(name);
         } else {
@@ -756,16 +830,16 @@ fail:
         if ((P->sp - base) % 2 == 0)
             sdsfree(P->stack[P->sp]);
         else
-            jsonFree(P->stack[P->sp]);
+            jsonFreeValue(P->stack[P->sp]);
     }
     return NULL;
 }
 
 static jsonValue *jsonParseValue(jsonParser *P) {
     switch (jsonPeek(P)) {
-    case 'n': return jsonParseLiteral(P, "null", 4) ? jsonCreateNull() : NULL;
-    case 't': return jsonParseLiteral(P, "true", 4) ? jsonCreateBool(1) : NULL;
-    case 'f': return jsonParseLiteral(P, "false", 5) ? jsonCreateBool(0) : NULL;
+    case 'n': return jsonParseLiteral(P, "null", 4) ? jsonNew(JSON_NULL) : NULL;
+    case 't': return jsonParseLiteral(P, "true", 4) ? jsonNew(JSON_TRUE) : NULL;
+    case 'f': return jsonParseLiteral(P, "false", 5) ? jsonNew(JSON_FALSE) : NULL;
     case '"': {
         sds s = jsonParseString(P);
         if (s == NULL) return NULL;
@@ -784,6 +858,7 @@ static jsonValue *jsonParseValue(jsonParser *P) {
  * objects are open. On success *depth, if not NULL, is the nesting depth
  * (0 for a scalar). */
 jsonValue *jsonParse(const char *buf, size_t len, size_t max_depth, int *err, size_t *depth) {
+    size_t mem = jsonTrackBegin();
     jsonParser P = {0};
     /* RapidJSON reads a NUL byte as end of input, so anything after it is
      * ignored. */
@@ -810,6 +885,7 @@ jsonValue *jsonParse(const char *buf, size_t len, size_t max_depth, int *err, si
         }
     }
     zfree(P.stack);
+    jsonTrackEnd(mem);
     if (err) *err = v ? JSON_OK : P.err;
     if (depth) *depth = P.deepest;
     return v;

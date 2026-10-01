@@ -14397,6 +14397,16 @@ int moduleConfigValidityCheck(ValkeyModule *module, const char *name, unsigned i
         errno = EALREADY;
         return VALKEYMODULE_ERR;
     }
+    /* Some built in configs are dotted, such as json.max-path-limit, and a
+     * module must not take one of them over. */
+    sds fullname = sdscatfmt(sdsempty(), "%s.%s", module->name, name);
+    int exists = configNameExists(fullname);
+    sdsfree(fullname);
+    if (exists) {
+        serverLog(LL_WARNING, "Configuration by the name: %s.%s is a server configuration", module->name, name);
+        errno = EALREADY;
+        return VALKEYMODULE_ERR;
+    }
     return VALKEYMODULE_OK;
 }
 

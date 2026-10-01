@@ -533,6 +533,17 @@ size_t zmalloc_used_memory(void) {
     return um;
 }
 
+/* Memory allocated less memory freed by the calling thread. Taking the
+ * difference across a piece of code measures what it allocated. Wraps below
+ * zero on a thread that frees memory allocated elsewhere. */
+size_t zmalloc_thread_used_memory(void) {
+    if (unlikely(thread_index == -1)) zmalloc_register_thread_index();
+    if (unlikely(thread_index >= MAX_THREADS_NUM)) {
+        return atomic_load_explicit(&used_memory_for_additional_threads, memory_order_relaxed);
+    }
+    return used_memory_thread[thread_index];
+}
+
 size_t zmalloc_used_external_memory(void) {
     return atomic_load_explicit(&used_memory_external, memory_order_relaxed);
 }

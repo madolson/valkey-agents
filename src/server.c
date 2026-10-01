@@ -7190,6 +7190,14 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         info = throttleRepl_sdscatInfoMetrics(info);
     }
 
+    /* JSON, answered where the valkey-json module's section was: its own
+     * name, the module name, "modules" and "everything". */
+    if (everything || dictFind(section_dict, "json_core_metrics") != NULL || dictFind(section_dict, "json") != NULL ||
+        dictFind(section_dict, "modules") != NULL) {
+        if (sections++) info = sdscat(info, "\r\n");
+        info = genJsonInfoString(info);
+    }
+
     /* Get info from modules.
      * Returned when the user asked for "everything", "modules", or a specific module section.
      * We're not aware of the module section names here, and we rather avoid the search when we can.

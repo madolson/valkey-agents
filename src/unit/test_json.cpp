@@ -16,17 +16,21 @@ extern "C" {
 #include "zmalloc.h"
 }
 
-/* Every test checks that all memory it allocated is released. */
+/* Every test checks that all memory it allocated is released, and that
+ * jsonUsedMemory() tracked the frees as well as the allocations. */
 class JsonTest : public ::testing::Test {
   protected:
     size_t mem_before = 0;
+    size_t json_mem_before = 0;
 
     void SetUp() override {
         mem_before = zmalloc_used_memory();
+        json_mem_before = jsonUsedMemory();
     }
 
     void TearDown() override {
         EXPECT_EQ(zmalloc_used_memory(), mem_before) << "Memory leak detected";
+        EXPECT_EQ(jsonUsedMemory(), json_mem_before) << "jsonUsedMemory() drifted";
     }
 };
 
@@ -548,6 +552,38 @@ TEST_F(JsonTest, DupReplaceAndMemory) {
     jsonFree(d);
     sdsfree(in);
 }
+
+/* jsonUsedMemory() moves by exactly what jsonMemoryUsage() reports for a
+ * document through parsing and every kind of mutation. Without
+ * HAVE_MALLOC_SIZE the two differ by the allocation prefix per block. */
+#ifdef HAVE_MALLOC_SIZE
+TEST_F(JsonTest, UsedMemoryTracksMutations) {
+    sds in = sdsnew("{\"a\":[1,2.5,\"s\\n\"],\"b\":{");
+    for (int i = 0; i < 40; i++) in = sdscatprintf(in, "%s\"m%d\":\"v%d\"", i ? "," : "", i, i);
+    in = sdscat(in, "}}");
+    jsonValue *v = parse(in);
+    sdsfree(in);
+    ASSERT_NE(v, nullptr);
+    EXPECT_EQ(jsonUsedMemory() - json_mem_before, jsonMemoryUsage(v));
+
+    jsonValue *a = jsonObjectFind(v, "a", 1, NULL);
+    jsonValue *b = jsonObjectFind(v, "b", 1, NULL);
+    for (int i = 0; i < 20; i++) jsonArrayAppend(a, jsonCreateNumber("1E2", 3));
+    jsonArrayInsert(a, 0, jsonCreateString("first", 5));
+    jsonArraySet(a, 1, jsonCreateObject());
+    jsonFree(jsonArrayDetach(a, 2));
+    jsonArrayDeleteRange(a, 0, 3);
+    for (int i = 0; i < 40; i++) jsonObjectSet(b, "new", 3, jsonCreateInteger(i));
+    jsonObjectSet(b, "m0", 2, jsonCreateNull());
+    jsonObjectDelete(b, "m1", 2);
+    jsonReplace(jsonObjectFind(b, "m2", 2, NULL), jsonCreateArray());
+    jsonObjectSet(v, "c", 1, jsonDup(b));
+    EXPECT_EQ(jsonUsedMemory() - json_mem_before, jsonMemoryUsage(v));
+
+    jsonFree(v);
+    EXPECT_EQ(jsonUsedMemory(), json_mem_before);
+}
+#endif
 
 TEST_F(JsonTest, ParseFailureFreesPartialTree) {
     /* Each fails after building nested values, member names and strings. */

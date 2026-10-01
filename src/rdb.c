@@ -1985,12 +1985,6 @@ robj *rdbLoadCheckModuleValue(rio *rdb, char *modulename) {
     return createStringObject("module-dummy-value", 18);
 }
 
-/* A document nests no deeper than the json.max-path-limit in force when it was
- * written, and that limit may since have been lowered, so loading must accept
- * more than any write limit. Parsing recurses, so the limit also keeps a
- * crafted RESTORE payload from exhausting the stack. */
-#define RDB_JSON_MAX_DEPTH 10000
-
 /* Data type name of valkey-json, whose values load natively. */
 #define JSON_MODULE_TYPE_NAME "ReJSON-RL"
 
@@ -2000,7 +1994,12 @@ static robj *rdbLoadJsonText(rio *rdb) {
     sds text = rdbGenericLoadStringObject(rdb, RDB_LOAD_SDS, NULL);
     if (text == NULL) return NULL;
     int err;
-    jsonValue *root = jsonParse(text, sdslen(text), RDB_JSON_MAX_DEPTH, &err, NULL);
+    /* A document nests no deeper than the json.max-path-limit in force when
+     * it was written, and that limit may since have been lowered, so loading
+     * accepts the highest limit that can be configured. Parsing recurses, so
+     * the limit also keeps a crafted RESTORE payload from exhausting the
+     * stack. */
+    jsonValue *root = jsonParse(text, sdslen(text), JSON_MAX_DEPTH_LIMIT, &err, NULL);
     sdsfree(text);
     if (root == NULL) {
         rdbReportCorruptRDB("Invalid JSON document: %s", jsonErrorMessage(err));

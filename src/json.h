@@ -22,6 +22,9 @@
 #include "sds.h"
 
 #define JSON_DEFAULT_MAX_DEPTH 128
+/* Deepest document RDB loading accepts, and so the json.max-path-limit
+ * ceiling: anything a write allowed must load again. */
+#define JSON_MAX_DEPTH_LIMIT 10000
 #define JSON_OBJECT_INDEX_MIN 32
 #define JSON_DOUBLE_BUFSIZE 32
 
@@ -115,6 +118,7 @@ int jsonFormatDouble(double d, char *buf); /* buf holds JSON_DOUBLE_BUFSIZE */
 double jsonGetDouble(const jsonValue *v);
 size_t jsonDepth(const jsonValue *v);
 size_t jsonMemoryUsage(const jsonValue *v);
+size_t jsonUsedMemory(void); /* Total jsonMemoryUsage() of all live values. */
 size_t jsonChildCount(const jsonValue *v);
 jsonValue *jsonChildAt(const jsonValue *v, size_t i);
 
