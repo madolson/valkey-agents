@@ -562,6 +562,7 @@ ENGINE_SERVER_OBJ = \
     intset.o \
     io_threads.o \
     json.o \
+    json_path.o \
     kvstore.o \
     latency.o \
     lazyfree.o \
