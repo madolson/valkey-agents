@@ -79,8 +79,13 @@ start_server {tags {json needs:debug}} {
         assert_equal [json_info_field json_num_documents] 2
         assert_equal [json_info_field json_total_memory_bytes] [expr {2 * $one}]
 
+        # replica-lazy-flush makes the reload free the old documents in the background.
         r debug reload
-        assert_equal [json_info_field json_num_documents] 2
+        wait_for_condition 50 100 {
+            [json_info_field json_num_documents] == 2
+        } else {
+            fail "old documents were not freed after DEBUG RELOAD"
+        }
         assert_equal [json_info_field json_total_memory_bytes] [expr {2 * $one}]
 
         r json.set a . {[]}
