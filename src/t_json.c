@@ -176,6 +176,13 @@ static const char *jsonOptionalPath(client *c) {
     return c->argc > 2 ? jsonArgPath(c, 2) : ".";
 }
 
+static int jsonArgLongLong(client *c, int idx, long long *ll) {
+    sds s = objectGetVal(c->argv[idx]);
+    if (string2ll(s, sdslen(s), ll)) return 1;
+    jsonReplyError(c, JSON_MSG_VALUE_NOT_INTEGER);
+    return 0;
+}
+
 /* json.max-path-limit. The AOF, a primary and slot migration replay documents
  * that RDB loading may have accepted deeper, so they get the loading limit. */
 static size_t jsonPathLimit(client *c) {
@@ -985,4 +992,546 @@ void jsonClearCommand(client *c) {
     jsonPathFree(&r);
     jsonKeyModified(c, c->argv[1], "json.clear");
     addReplyLongLong(c, cleared);
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON.STRLEN, JSON.STRAPPEND
+ * ------------------------------------------------------------------------- */
+
+/* JSON.STRLEN key [path] */
+void jsonStrlenCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrNull(c, c->argv[1]);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonEvalRead(&r, root, jsonOptionalPath(c));
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+    } else if (jsonLegacyCheck(c, &r, JSON_STRING, JSON_STRING, JSON_MSG_NOT_STRING)) {
+        long long *vals = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+        unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+        for (size_t i = 0; i < r.len; i++) {
+            jsonValue *v = r.matches[i].value;
+            if (v->type == JSON_STRING)
+                vals[i] = sdslen(v->string);
+            else
+                isnull[i] = 1;
+        }
+        jsonReplyIntegers(c, &r, vals, isnull, 0);
+        zfree(vals);
+        zfree(isnull);
+    }
+    jsonPathFree(&r);
+}
+
+/* JSON.STRAPPEND key [path] json */
+void jsonStrappendCommand(client *c) {
+    if (c->argc > 4) {
+        addReplyErrorArity(c);
+        return;
+    }
+    int value_idx = c->argc - 1;
+    const char *path = c->argc == 4 ? jsonArgPath(c, 2) : ".";
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) return;
+    if (jsonSizeLimitExceeded(c, jsonDocumentSize(c, root) + sdslen(objectGetVal(c->argv[value_idx])))) {
+        jsonReplyError(c, JSON_MSG_SIZE_LIMIT);
+        return;
+    }
+
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonValue *append = NULL;
+    int err;
+    jsonPathCode rc = jsonPathEval(&r, root, path, JSON_PATH_READ);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        goto cleanup;
+    }
+    if (!jsonLegacyCheck(c, &r, JSON_STRING, JSON_STRING, JSON_MSG_NOT_STRING)) goto cleanup;
+    if ((append = jsonParseArg(c, value_idx, &err, NULL)) == NULL) {
+        jsonReplyParseError(c, err);
+        goto cleanup;
+    }
+    if (append->type != JSON_STRING) {
+        jsonReplyError(c, JSON_MSG_VALUE_NOT_STRING);
+        goto cleanup;
+    }
+
+    jsonPathDedupe(&r);
+    long long *vals = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+    unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+    /* The module joins both strings as C strings, so each is cut at its first
+     * NUL character. */
+    size_t append_len = strlen(append->string);
+    for (size_t i = 0; i < r.len; i++) {
+        jsonValue *v = r.matches[i].value;
+        if (v->type != JSON_STRING) {
+            isnull[i] = 1;
+            continue;
+        }
+        sds s = sdsnewlen(v->string, strlen(v->string));
+        s = sdscatlen(s, append->string, append_len);
+        vals[i] = sdslen(s);
+        jsonReplace(v, jsonCreateString(s, sdslen(s)));
+        sdsfree(s);
+    }
+    jsonKeyModified(c, c->argv[1], "json.strappend");
+    jsonReplyIntegers(c, &r, vals, isnull, 1);
+    zfree(vals);
+    zfree(isnull);
+cleanup:
+    jsonFree(append);
+    jsonPathFree(&r);
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON.OBJLEN, JSON.OBJKEYS
+ * ------------------------------------------------------------------------- */
+
+/* JSON.OBJLEN key [path] */
+void jsonObjlenCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrNull(c, c->argv[1]);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonEvalRead(&r, root, jsonOptionalPath(c));
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+    } else if (jsonLegacyCheck(c, &r, JSON_OBJECT, JSON_OBJECT, JSON_MSG_NOT_OBJECT)) {
+        long long *vals = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+        unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+        for (size_t i = 0; i < r.len; i++) {
+            jsonValue *v = r.matches[i].value;
+            if (v->type == JSON_OBJECT)
+                vals[i] = v->object.len;
+            else
+                isnull[i] = 1;
+        }
+        jsonReplyIntegers(c, &r, vals, isnull, 0);
+        zfree(vals);
+        zfree(isnull);
+    }
+    jsonPathFree(&r);
+}
+
+static void jsonReplyMemberNames(client *c, const jsonValue *v) {
+    size_t n = v->type == JSON_OBJECT ? v->object.len : 0;
+    addReplyArrayLen(c, n);
+    for (size_t i = 0; i < n; i++) {
+        sds name = v->object.members[i].name;
+        addReplyBulkCBuffer(c, name, sdslen(name));
+    }
+}
+
+/* JSON.OBJKEYS key [path] */
+void jsonObjkeysCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrNull(c, c->argv[1]);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonEvalRead(&r, root, jsonOptionalPath(c));
+    if (rc == JSON_PATH_OK && !r.v2 && r.len == 0) rc = JSON_PATH_ERR_NOT_EXIST;
+    if (rc == JSON_PATH_ERR_INVALID_PATH || rc == JSON_PATH_ERR_NOT_EXIST) {
+        addReplyNull(c);
+    } else if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+    } else if (!r.v2 && !jsonAnyOfType(&r, JSON_OBJECT, JSON_OBJECT)) {
+        jsonReplyError(c, JSON_MSG_NOT_OBJECT);
+    } else if (!r.v2) {
+        /* The first object that has members, else an empty array. */
+        size_t i;
+        for (i = 0; i < r.len; i++) {
+            jsonValue *v = r.matches[i].value;
+            if (v->type == JSON_OBJECT && v->object.len) break;
+        }
+        if (i < r.len)
+            jsonReplyMemberNames(c, r.matches[i].value);
+        else
+            addReplyArrayLen(c, 0);
+    } else {
+        addReplyArrayLen(c, r.len);
+        for (size_t i = 0; i < r.len; i++) jsonReplyMemberNames(c, r.matches[i].value);
+    }
+    jsonPathFree(&r);
+}
+
+/* ----------------------------------------------------------------------------
+ * Array commands
+ * ------------------------------------------------------------------------- */
+
+/* JSON.ARRLEN key [path] */
+void jsonArrlenCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrNull(c, c->argv[1]);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonEvalRead(&r, root, jsonOptionalPath(c));
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+    } else if (jsonLegacyCheck(c, &r, JSON_ARRAY, JSON_ARRAY, JSON_MSG_NOT_ARRAY)) {
+        long long *vals = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+        unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+        for (size_t i = 0; i < r.len; i++) {
+            jsonValue *v = r.matches[i].value;
+            if (v->type == JSON_ARRAY)
+                vals[i] = v->array.len;
+            else
+                isnull[i] = 1;
+        }
+        jsonReplyIntegers(c, &r, vals, isnull, 0);
+        zfree(vals);
+        zfree(isnull);
+    }
+    jsonPathFree(&r);
+}
+
+/* Parse the values JSON.ARRAPPEND and JSON.ARRINSERT add, with the module's
+ * per value nesting check and total size check. Replies and returns NULL on
+ * failure. */
+static jsonValue **jsonParseValues(client *c, int first, const jsonPathResult *r, jsonValue *root) {
+    int n = c->argc - first;
+    jsonValue **vals = zcalloc(sizeof(jsonValue *) * n);
+    size_t total = 0;
+    const char *msg = NULL;
+    for (int i = 0; i < n && !msg; i++) {
+        int err;
+        size_t depth;
+        vals[i] = jsonParseArg(c, first + i, &err, &depth);
+        if (vals[i] == NULL)
+            msg = jsonErrorMessage(err);
+        else if (r->max_depth + depth > jsonPathLimit(c))
+            msg = JSON_MSG_PATH_LIMIT;
+        else
+            total += jsonDocumentSize(c, vals[i]);
+    }
+    if (!msg && jsonSizeLimitExceeded(c, jsonDocumentSize(c, root) + total)) msg = JSON_MSG_SIZE_LIMIT;
+    if (msg) {
+        for (int i = 0; i < n; i++) jsonFree(vals[i]);
+        zfree(vals);
+        jsonReplyError(c, msg);
+        return NULL;
+    }
+    return vals;
+}
+
+static void jsonFreeValues(jsonValue **vals, int n) {
+    for (int i = 0; i < n; i++) jsonFree(vals[i]);
+    zfree(vals);
+}
+
+/* JSON.ARRAPPEND key path json [json ...] */
+void jsonArrappendCommand(client *c) {
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonPathEval(&r, root, jsonArgPath(c, 2), JSON_PATH_READ);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        jsonPathFree(&r);
+        return;
+    }
+    jsonValue **vals;
+    if (!jsonLegacyCheck(c, &r, JSON_ARRAY, JSON_ARRAY, JSON_MSG_NOT_ARRAY) ||
+        (vals = jsonParseValues(c, 3, &r, root)) == NULL) {
+        jsonPathFree(&r);
+        return;
+    }
+    int n = c->argc - 3;
+
+    jsonPathDedupe(&r);
+    long long *lens = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+    unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+    size_t *order = jsonDeepestFirst(&r);
+    for (size_t k = 0; k < r.len; k++) {
+        size_t i = order[k];
+        jsonValue *arr = r.matches[i].value;
+        if (arr->type != JSON_ARRAY) {
+            isnull[i] = 1;
+            continue;
+        }
+        for (int j = 0; j < n; j++) jsonArrayAppend(arr, jsonDup(vals[j]));
+        lens[i] = arr->array.len;
+    }
+    jsonKeyModified(c, c->argv[1], "json.arrappend");
+    jsonReplyIntegers(c, &r, lens, isnull, 0);
+    zfree(order);
+    zfree(lens);
+    zfree(isnull);
+    jsonFreeValues(vals, n);
+    jsonPathFree(&r);
+}
+
+/* JSON.ARRINSERT key path index json [json ...] */
+void jsonArrinsertCommand(client *c) {
+    long long index;
+    if (!jsonArgLongLong(c, 3, &index)) return;
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonPathEval(&r, root, jsonArgPath(c, 2), JSON_PATH_READ);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        jsonPathFree(&r);
+        return;
+    }
+    jsonValue **vals;
+    if (!jsonLegacyCheck(c, &r, JSON_ARRAY, JSON_ARRAY, JSON_MSG_NOT_ARRAY) ||
+        (vals = jsonParseValues(c, 4, &r, root)) == NULL) {
+        jsonPathFree(&r);
+        return;
+    }
+    int n = c->argc - 4;
+
+    jsonPathDedupe(&r);
+    long long *lens = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+    unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+    size_t *order = jsonDeepestFirst(&r);
+    size_t changed = 0;
+    int out_of_bounds = 0;
+    for (size_t k = 0; k < r.len; k++) {
+        size_t i = order[k];
+        jsonValue *arr = r.matches[i].value;
+        if (arr->type != JSON_ARRAY) {
+            isnull[i] = 1;
+            continue;
+        }
+        long long size = arr->array.len, at = index;
+        if (at < 0) at = size == 0 ? 0 : size + at;
+        if (at < 0 || at > size) {
+            /* Arrays already changed stay changed, as in the module. */
+            out_of_bounds = 1;
+            break;
+        }
+        for (int j = 0; j < n; j++) jsonArrayInsert(arr, at + j, jsonDup(vals[j]));
+        lens[i] = arr->array.len;
+        changed++;
+    }
+    if (out_of_bounds) {
+        if (changed) jsonKeyPartiallyModified(c, c->argv[1], root);
+        jsonReplyError(c, JSON_MSG_OUT_OF_BOUNDS);
+    } else {
+        jsonKeyModified(c, c->argv[1], "json.arrinsert");
+        jsonReplyIntegers(c, &r, lens, isnull, 0);
+    }
+    zfree(order);
+    zfree(lens);
+    zfree(isnull);
+    jsonFreeValues(vals, n);
+    jsonPathFree(&r);
+}
+
+/* JSON.ARRPOP key [path [index]] */
+void jsonArrpopCommand(client *c) {
+    long long index = -1;
+    if (c->argc > 4) {
+        addReplyErrorArity(c);
+        return;
+    }
+    if (c->argc > 3 && !jsonArgLongLong(c, 3, &index)) return;
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonPathEval(&r, root, jsonOptionalPath(c), JSON_PATH_READ);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        jsonPathFree(&r);
+        return;
+    }
+    if (!jsonLegacyCheck(c, &r, JSON_ARRAY, JSON_ARRAY, JSON_MSG_NOT_ARRAY)) {
+        jsonPathFree(&r);
+        return;
+    }
+
+    jsonPathDedupe(&r);
+    sds *popped = zcalloc(sizeof(sds) * (r.len ? r.len : 1));
+    size_t *order = jsonDeepestFirst(&r);
+    for (size_t k = 0; k < r.len; k++) {
+        size_t i = order[k];
+        jsonValue *arr = r.matches[i].value;
+        if (arr->type != JSON_ARRAY || arr->array.len == 0) continue;
+        long long size = arr->array.len, at = index;
+        if (at < 0) at = size + at;
+        if (at >= size) at = size - 1;
+        if (at < 0) at = 0;
+        jsonValue *v = jsonArrayDetach(arr, at);
+        popped[i] = jsonSerialize(sdsempty(), v, NULL, 0);
+        jsonFree(v);
+    }
+    zfree(order);
+    jsonKeyModified(c, c->argv[1], "json.arrpop");
+    if (!r.v2) {
+        size_t i;
+        for (i = 0; i < r.len && popped[i] == NULL; i++);
+        if (i < r.len)
+            addReplyBulkCBuffer(c, popped[i], sdslen(popped[i]));
+        else
+            addReplyNull(c);
+    } else {
+        addReplyArrayLen(c, r.len);
+        for (size_t i = 0; i < r.len; i++) {
+            if (popped[i])
+                addReplyBulkCBuffer(c, popped[i], sdslen(popped[i]));
+            else
+                addReplyNull(c);
+        }
+    }
+    for (size_t i = 0; i < r.len; i++) sdsfree(popped[i]);
+    zfree(popped);
+    jsonPathFree(&r);
+}
+
+/* JSON.ARRTRIM key path start stop, both inclusive. */
+void jsonArrtrimCommand(client *c) {
+    long long start, stop;
+    if (!jsonArgLongLong(c, 3, &start) || !jsonArgLongLong(c, 4, &stop)) return;
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonPathEval(&r, root, jsonArgPath(c, 2), JSON_PATH_READ);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        jsonPathFree(&r);
+        return;
+    }
+    if (!jsonLegacyCheck(c, &r, JSON_ARRAY, JSON_ARRAY, JSON_MSG_NOT_ARRAY)) {
+        jsonPathFree(&r);
+        return;
+    }
+
+    jsonPathDedupe(&r);
+    long long *lens = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+    unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+    size_t *order = jsonDeepestFirst(&r);
+    for (size_t k = 0; k < r.len; k++) {
+        size_t i = order[k];
+        jsonValue *arr = r.matches[i].value;
+        if (arr->type != JSON_ARRAY) {
+            isnull[i] = 1;
+            continue;
+        }
+        long long size = arr->array.len, from = start, to = stop;
+        lens[i] = 0;
+        if (size == 0) continue;
+        if (from < 0) from = 0;
+        if (to >= size) to = size - 1;
+        if (from >= size || from > to) {
+            jsonArrayDeleteRange(arr, 0, size);
+            continue;
+        }
+        if (to < size - 1) jsonArrayDeleteRange(arr, to + 1, size - to - 1);
+        if (from > 0) jsonArrayDeleteRange(arr, 0, from);
+        lens[i] = arr->array.len;
+    }
+    jsonKeyModified(c, c->argv[1], "json.arrtrim");
+    jsonReplyIntegers(c, &r, lens, isnull, 0);
+    zfree(order);
+    zfree(lens);
+    zfree(isnull);
+    jsonPathFree(&r);
+}
+
+/* RapidJSON's operator==: numbers compare as doubles unless both are
+ * integers, objects compare by member name regardless of order. */
+static int jsonValueEqual(const jsonValue *a, const jsonValue *b) {
+    if (jsonIsNumber(a) && jsonIsNumber(b)) {
+        if (a->type == JSON_INTEGER && b->type == JSON_INTEGER) return a->integer == b->integer;
+        double x = jsonGetDouble(a), y = jsonGetDouble(b);
+        return x >= y && x <= y;
+    }
+    if (a->type != b->type) return 0;
+    switch (a->type) {
+    case JSON_STRING: return sdslen(a->string) == sdslen(b->string) && !memcmp(a->string, b->string, sdslen(a->string));
+    case JSON_ARRAY:
+        if (a->array.len != b->array.len) return 0;
+        for (size_t i = 0; i < a->array.len; i++) {
+            if (!jsonValueEqual(a->array.items[i], b->array.items[i])) return 0;
+        }
+        return 1;
+    case JSON_OBJECT:
+        if (a->object.len != b->object.len) return 0;
+        for (size_t i = 0; i < a->object.len; i++) {
+            const jsonMember *m = &a->object.members[i];
+            const jsonValue *other = jsonObjectFind(b, m->name, sdslen(m->name), NULL);
+            if (other == NULL || !jsonValueEqual(m->value, other)) return 0;
+        }
+        return 1;
+    default: return 1;
+    }
+}
+
+/* JSON.ARRINDEX key path value [start [stop]], stop exclusive with 0 and -1
+ * meaning the end. */
+void jsonArrindexCommand(client *c) {
+    long long start = 0, stop = 0;
+    if (c->argc > 6) {
+        addReplyErrorArity(c);
+        return;
+    }
+    if (c->argc > 4 && !jsonArgLongLong(c, 4, &start)) return;
+    if (c->argc > 5 && !jsonArgLongLong(c, 5, &stop)) return;
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 0);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonValue *needle = NULL;
+    int err;
+    jsonPathCode rc = jsonEvalRead(&r, root, jsonArgPath(c, 2));
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        goto cleanup;
+    }
+    if (!jsonLegacyCheck(c, &r, JSON_ARRAY, JSON_ARRAY, JSON_MSG_NOT_ARRAY)) goto cleanup;
+    if (start < 0) start = 0;
+    if ((needle = jsonParseArg(c, 3, &err, NULL)) == NULL) {
+        jsonReplyParseError(c, err);
+        goto cleanup;
+    }
+
+    long long *found = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+    unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+    for (size_t i = 0; i < r.len; i++) {
+        jsonValue *arr = r.matches[i].value;
+        if (arr->type != JSON_ARRAY) {
+            isnull[i] = 1;
+            continue;
+        }
+        long long size = arr->array.len, end = stop;
+        found[i] = -1;
+        if (size == 0) continue;
+        if (end == 0 || end == -1) end = size;
+        if (end > size) end = size;
+        for (long long j = start; j < end; j++) {
+            if (jsonValueEqual(arr->array.items[j], needle)) {
+                found[i] = j;
+                break;
+            }
+        }
+    }
+    jsonReplyIntegers(c, &r, found, isnull, 0);
+    zfree(found);
+    zfree(isnull);
+cleanup:
+    jsonFree(needle);
+    jsonPathFree(&r);
 }

@@ -3876,6 +3876,16 @@ void jsonDelCommand(client *c);
 void jsonTypeCommand(client *c);
 void jsonNumincrbyCommand(client *c);
 void jsonNummultbyCommand(client *c);
+void jsonStrappendCommand(client *c);
+void jsonStrlenCommand(client *c);
+void jsonArrappendCommand(client *c);
+void jsonArrindexCommand(client *c);
+void jsonArrinsertCommand(client *c);
+void jsonArrlenCommand(client *c);
+void jsonArrpopCommand(client *c);
+void jsonArrtrimCommand(client *c);
+void jsonObjkeysCommand(client *c);
+void jsonObjlenCommand(client *c);
 void jsonClearCommand(client *c);
 void jsonToggleCommand(client *c);
 

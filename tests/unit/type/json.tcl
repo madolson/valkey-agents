@@ -233,6 +233,20 @@ start_server {tags {json}} {
         assert_error {LIMIT*} {r json.set k . "[string repeat {[} 129][string repeat {]} 129]"}
     }
 
+    test {JSON.SET enforces json.max-document-size} {
+        r flushall
+        r config set json.max-document-size 1000
+        r json.set k . {{"a":[]}}
+        assert_error {LIMIT Document size limit is exceeded} {r json.set k . "\[[string repeat {"abcdefghij",} 200]0\]"}
+        assert_error {LIMIT Document size limit is exceeded} {r json.set k .a "\[[string repeat {"abcdefghij",} 200]0\]"}
+        assert_error {LIMIT Document size limit is exceeded} {r json.arrappend k .a "\"[string repeat x 2000]\""}
+        r json.set k .s {""}
+        assert_error {LIMIT Document size limit is exceeded} {r json.strappend k .s "\"[string repeat x 2000]\""}
+        assert_equal {{"a":[],"s":""}} [r json.get k]
+        r config set json.max-document-size 0
+        assert_equal OK [r json.set k .a "\[[string repeat {"abcdefghij",} 200]0\]"]
+    }
+
     test {JSON.GET formatting options} {
         r flushall
         r json.set k . {{"a":1,"b":[1,2],"c":{}}}
@@ -357,6 +371,35 @@ start_server {tags {json}} {
         assert_equal {[-9e308]} [r json.get k]
     }
 
+    test {JSON.STRLEN and JSON.STRAPPEND} {
+        r flushall
+        r json.set k . {{"a":"ab","b":{"a":"x"},"n":1}}
+        assert_equal 2 [r json.strlen k .a]
+        assert_equal {2 1} [r json.strlen k {$..a}]
+        assert_equal 4 [r json.strappend k .a {"cd"}]
+        assert_equal {5 2} [r json.strappend k {$..a} {"!"}]
+        # Legacy paths reply with the last string changed.
+        assert_equal 3 [r json.strappend k ..a {"?"}]
+        assert_equal {{"a":"abcd!?","b":{"a":"x!?"},"n":1}} [r json.get k]
+        assert_equal {7 {} {}} [r json.strappend k {$.*} {"."}]
+        assert_error {WRONGTYPE JSON element is not a string} {r json.strlen k .n}
+        assert_error {WRONGTYPE JSON element is not a string} {r json.strappend k .n {"x"}}
+        assert_error {WRONGTYPE Value is not a string} {r json.strappend k .a 1}
+        assert_error {SYNTAXERR*} {r json.strappend k .a x}
+        assert_equal {} [r json.strlen nokey]
+        r json.set s . {"x"}
+        assert_equal 3 [r json.strappend s {"yz"}]
+        assert_equal {"xyz"} [r json.get s]
+    }
+
+    test {JSON.STRAPPEND cuts both strings at a NUL character} {
+        r flushall
+        r json.set s . {"a\u0000b"}
+        assert_equal 3 [r json.strlen s]
+        assert_equal 2 [r json.strappend s {"c\u0000d"}]
+        assert_equal {"ac"} [r json.get s]
+    }
+
     test {JSON.TOGGLE replies JSON under a legacy path and integers under JSONPath} {
         r flushall
         r json.set k . {{"a":true,"b":{"a":false},"n":1}}
@@ -383,6 +426,103 @@ start_server {tags {json}} {
         assert_equal 1 [r json.clear k]
         assert_equal {{}} [r json.get k]
         assert_error {NONEXISTENT Document key does not exist} {r json.clear nokey}
+    }
+
+    test {JSON.ARRLEN, JSON.ARRAPPEND and JSON.ARRINSERT} {
+        r flushall
+        r json.set k . {{"a":[1],"b":{"a":[]},"n":1}}
+        assert_equal 1 [r json.arrlen k .a]
+        assert_equal {1 0} [r json.arrlen k {$..a}]
+        assert_equal {1 {} {}} [r json.arrlen k {$.*}]
+        assert_equal 3 [r json.arrappend k .a 2 {"x"}]
+        assert_equal {4 1} [r json.arrappend k {$..a} null]
+        assert_equal 6 [r json.arrinsert k .a 0 -1 -2]
+        assert_equal 7 [r json.arrinsert k .a -1 {"before last"}]
+        assert_equal 8 [r json.arrinsert k .a 7 {"end"}]
+        assert_equal {{"a":[-1,-2,1,2,"x","before last",null,"end"],"b":{"a":[null]},"n":1}} [r json.get k]
+        assert_error {OUTOFBOUNDARIES Array index is out of bounds} {r json.arrinsert k .a 9 1}
+        assert_error {OUTOFBOUNDARIES Array index is out of bounds} {r json.arrinsert k .a -9 1}
+        assert_error {WRONGTYPE Value is not an integer} {r json.arrinsert k .a x 1}
+        assert_error {WRONGTYPE JSON element is not an array} {r json.arrappend k .n 1}
+        assert_error {SYNTAXERR*} {r json.arrappend k .a {[}}
+        assert_error {NONEXISTENT Document key does not exist} {r json.arrappend nokey . 1}
+        assert_equal {} [r json.arrlen nokey]
+    }
+
+    test {JSON.ARRINSERT keeps arrays changed before an out of bounds one} {
+        r flushall
+        r json.set k . {{"a":[1,[2,3,4]]}}
+        # Deepest first: the inner array is changed, then the outer one fails.
+        assert_error {OUTOFBOUNDARIES*} {r json.arrinsert k {$..*} 3 0}
+        assert_equal {{"a":[1,[2,3,4,0]]}} [r json.get k]
+    }
+
+    test {JSON.ARRPOP} {
+        r flushall
+        r json.set k . {{"a":[1,2,3,4,5],"b":[],"n":1}}
+        assert_equal 5 [r json.arrpop k .a]
+        assert_equal 1 [r json.arrpop k .a 0]
+        assert_equal 4 [r json.arrpop k .a 100]
+        assert_equal 2 [r json.arrpop k .a -100]
+        assert_equal {3 {} {}} [r json.arrpop k {$.*}]
+        assert_equal {{"a":[],"b":[],"n":1}} [r json.get k]
+        assert_equal {} [r json.arrpop k .b]
+        r json.set k .a {[{"x":1}]}
+        assert_equal {{"x":1}} [r json.arrpop k .a]
+        assert_error {WRONGTYPE Value is not an integer} {r json.arrpop k .a x}
+        assert_error {WRONGTYPE JSON element is not an array} {r json.arrpop k .n}
+        r json.set a . {[1,[2,3]]}
+        assert_equal {[2,3]} [r json.arrpop a]
+    }
+
+    test {JSON.ARRTRIM} {
+        r flushall
+        r json.set k . {{"a":[0,1,2,3,4,5],"b":[],"n":1}}
+        assert_equal 3 [r json.arrtrim k .a 1 3]
+        assert_equal {[1,2,3]} [r json.get k .a]
+        assert_equal 3 [r json.arrtrim k .a -5 100]
+        assert_equal 0 [r json.arrtrim k .a 0 -1]
+        assert_equal {0 0 {}} [r json.arrtrim k {$.*} 0 1]
+        r json.set k .a {[0,1,2]}
+        assert_equal 0 [r json.arrtrim k .a 2 1]
+        assert_error {WRONGTYPE Value is not an integer} {r json.arrtrim k .a 0 x}
+    }
+
+    test {JSON.ARRINDEX} {
+        r flushall
+        r json.set k . {{"a":[1,1.0,"1",{"x":[1,{}]},true,null],"b":{"a":[]},"n":1}}
+        assert_equal 0 [r json.arrindex k .a 1.0]
+        assert_equal 1 [r json.arrindex k .a 1E0 1]
+        assert_equal 2 [r json.arrindex k .a {"1"}]
+        assert_equal 3 [r json.arrindex k .a {{"x":[1.0,{}]}}]
+        assert_equal 5 [r json.arrindex k .a null]
+        assert_equal -1 [r json.arrindex k .a true 0 4]
+        assert_equal 4 [r json.arrindex k .a true -10 -1]
+        assert_equal -1 [r json.arrindex k .a true 0 -2]
+        assert_equal {-1 -1} [r json.arrindex k {$..a} false]
+        assert_equal {0 {} {}} [r json.arrindex k {$.*} 1]
+        assert_error {WRONGTYPE JSON element is not an array} {r json.arrindex k .n 1}
+        assert_error {SYNTAXERR*} {r json.arrindex k .a {[}}
+        assert_error {WRONGTYPE Value is not an integer} {r json.arrindex k .a 1 x}
+        assert_error {NONEXISTENT Document key does not exist} {r json.arrindex nokey . 1}
+    }
+
+    test {JSON.OBJLEN and JSON.OBJKEYS} {
+        r flushall
+        r json.set k . {{"a":{"x":1,"y":2},"b":{},"n":1}}
+        assert_equal 3 [r json.objlen k]
+        assert_equal 2 [r json.objlen k .a]
+        assert_equal {2 0 {}} [r json.objlen k {$.*}]
+        assert_equal {a b n} [r json.objkeys k]
+        assert_equal {x y} [r json.objkeys k .a]
+        assert_equal {{x y} {} {}} [r json.objkeys k {$.*}]
+        assert_equal {} [r json.objkeys k .b]
+        assert_equal {} [r json.objkeys k .missing]
+        assert_equal {} [r json.objkeys nokey]
+        assert_error {WRONGTYPE JSON element is not an object} {r json.objkeys k .n}
+        assert_error {WRONGTYPE JSON element is not an object} {r json.objlen k .n}
+        assert_error {NONEXISTENT JSON path does not exist} {r json.objlen k .missing}
+        assert_equal {} [r json.objlen nokey]
     }
 }
 
