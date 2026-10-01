@@ -3874,6 +3874,10 @@ void jsonGetCommand(client *c);
 void jsonMgetCommand(client *c);
 void jsonDelCommand(client *c);
 void jsonTypeCommand(client *c);
+void jsonNumincrbyCommand(client *c);
+void jsonNummultbyCommand(client *c);
+void jsonClearCommand(client *c);
+void jsonToggleCommand(client *c);
 
 /* Pub / Sub */
 int pubsubUnsubscribeAllChannels(client *c, int notify);

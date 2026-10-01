@@ -4656,6 +4656,31 @@ struct COMMAND_ARG PFMERGE_Args[] = {
 #define PFSELFTEST_Keyspecs NULL
 #endif
 
+/********** JSON_CLEAR ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_CLEAR history */
+#define JSON_CLEAR_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_CLEAR tips */
+#define JSON_CLEAR_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_CLEAR key specs */
+keySpec JSON_CLEAR_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_DELETE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_CLEAR argument table */
+struct COMMAND_ARG JSON_CLEAR_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
 /********** JSON_DEL ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -4791,6 +4816,58 @@ struct COMMAND_ARG JSON_MSET_Args[] = {
 {MAKE_ARG("data",ARG_TYPE_BLOCK,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,3,NULL),.subargs=JSON_MSET_data_Subargs},
 };
 
+/********** JSON_NUMINCRBY ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_NUMINCRBY history */
+#define JSON_NUMINCRBY_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_NUMINCRBY tips */
+#define JSON_NUMINCRBY_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_NUMINCRBY key specs */
+keySpec JSON_NUMINCRBY_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_ACCESS|CMD_KEY_UPDATE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_NUMINCRBY argument table */
+struct COMMAND_ARG JSON_NUMINCRBY_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("number",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** JSON_NUMMULTBY ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_NUMMULTBY history */
+#define JSON_NUMMULTBY_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_NUMMULTBY tips */
+#define JSON_NUMMULTBY_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_NUMMULTBY key specs */
+keySpec JSON_NUMMULTBY_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_ACCESS|CMD_KEY_UPDATE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_NUMMULTBY argument table */
+struct COMMAND_ARG JSON_NUMMULTBY_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("number",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** JSON_SET ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -4822,6 +4899,31 @@ struct COMMAND_ARG JSON_SET_Args[] = {
 {MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 {MAKE_ARG("json",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 {MAKE_ARG("condition",ARG_TYPE_ONEOF,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,2,NULL),.subargs=JSON_SET_condition_Subargs},
+};
+
+/********** JSON_TOGGLE ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_TOGGLE history */
+#define JSON_TOGGLE_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_TOGGLE tips */
+#define JSON_TOGGLE_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_TOGGLE key specs */
+keySpec JSON_TOGGLE_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_ACCESS|CMD_KEY_UPDATE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_TOGGLE argument table */
+struct COMMAND_ARG JSON_TOGGLE_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
 };
 
 /********** JSON_TYPE ********************/
@@ -12962,12 +13064,16 @@ struct COMMAND_STRUCT serverCommandTable[] = {
 {MAKE_CMD("pfmerge","Merges one or more HyperLogLog values into a single key.","O(N) to merge N HyperLogLogs, but with high constant times.","2.8.9",CMD_DOC_NONE,NULL,NULL,"hyperloglog",COMMAND_GROUP_HYPERLOGLOG,PFMERGE_History,0,PFMERGE_Tips,0,pfmergeCommand,-2,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_HYPERLOGLOG|ACL_CATEGORY_SLOW|ACL_CATEGORY_WRITE,NULL,PFMERGE_Keyspecs,2,NULL,2),.args=PFMERGE_Args},
 {MAKE_CMD("pfselftest","An internal command for testing HyperLogLog values.","N/A","2.8.9",CMD_DOC_SYSCMD,NULL,NULL,"hyperloglog",COMMAND_GROUP_HYPERLOGLOG,PFSELFTEST_History,0,PFSELFTEST_Tips,0,pfselftestCommand,1,CMD_ADMIN,ACL_CATEGORY_ADMIN|ACL_CATEGORY_DANGEROUS|ACL_CATEGORY_HYPERLOGLOG|ACL_CATEGORY_SLOW,NULL,PFSELFTEST_Keyspecs,0,NULL,0)},
 /* json */
+{MAKE_CMD("json.clear","Empties containers and resets scalars at a path.","O(N) where N is the number of values removed.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_CLEAR_History,0,JSON_CLEAR_Tips,0,jsonClearCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_CLEAR_Keyspecs,1,NULL,2),.args=JSON_CLEAR_Args},
 {MAKE_CMD("json.del","Deletes the values at a path, or the key for the root path.","O(N) where N is the number of values deleted.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEL_History,0,JSON_DEL_Tips,0,jsonDelCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_DEL_Keyspecs,1,NULL,2),.args=JSON_DEL_Args},
 {MAKE_CMD("json.forget","Deletes the values at a path, or the key for the root path. An alias of JSON.DEL.","O(N) where N is the number of values deleted.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_FORGET_History,0,JSON_FORGET_Tips,0,jsonDelCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_FORGET_Keyspecs,1,NULL,2),.args=JSON_FORGET_Args},
 {MAKE_CMD("json.get","Returns the JSON serialization of the values at one or more paths.","O(N) where N is the size of the values returned.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_GET_History,0,JSON_GET_Tips,0,jsonGetCommand,-2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_GET_Keyspecs,1,NULL,6),.args=JSON_GET_Args},
 {MAKE_CMD("json.mget","Returns the JSON serialization of the values at a path in one or more keys.","O(N) where N is the size of the values returned.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_MGET_History,0,JSON_MGET_Tips,0,jsonMgetCommand,-3,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_MGET_Keyspecs,1,NULL,2),.args=JSON_MGET_Args},
 {MAKE_CMD("json.mset","Sets JSON values at paths in one or more keys.","O(N) where N is the total size of the new values.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_MSET_History,0,JSON_MSET_Tips,0,jsonMsetCommand,-4,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,JSON_MSET_Keyspecs,1,NULL,1),.args=JSON_MSET_Args},
+{MAKE_CMD("json.numincrby","Adds a number to the numbers at a path.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_NUMINCRBY_History,0,JSON_NUMINCRBY_Tips,0,jsonNumincrbyCommand,4,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_NUMINCRBY_Keyspecs,1,NULL,3),.args=JSON_NUMINCRBY_Args},
+{MAKE_CMD("json.nummultby","Multiplies the numbers at a path by a number.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_NUMMULTBY_History,0,JSON_NUMMULTBY_Tips,0,jsonNummultbyCommand,4,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_NUMMULTBY_Keyspecs,1,NULL,3),.args=JSON_NUMMULTBY_Args},
 {MAKE_CMD("json.set","Sets the JSON value at a path, creating the key for the root path.","O(N) where N is the size of the new value plus the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_SET_History,0,JSON_SET_Tips,0,jsonSetCommand,-4,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,JSON_SET_Keyspecs,1,NULL,4),.args=JSON_SET_Args},
+{MAKE_CMD("json.toggle","Toggles the booleans at a path.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_TOGGLE_History,0,JSON_TOGGLE_Tips,0,jsonToggleCommand,-2,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_TOGGLE_Keyspecs,1,NULL,2),.args=JSON_TOGGLE_Args},
 {MAKE_CMD("json.type","Returns the type of the values at a path.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_TYPE_History,0,JSON_TYPE_Tips,0,jsonTypeCommand,-2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_TYPE_Keyspecs,1,NULL,2),.args=JSON_TYPE_Args},
 /* list */
 {MAKE_CMD("blmove","Pops an element from a list, pushes it to another list and returns it. Blocks until an element is available otherwise. Deletes the list if the last element was moved.","O(1)","6.2.0",CMD_DOC_NONE,NULL,NULL,"list",COMMAND_GROUP_LIST,BLMOVE_History,0,BLMOVE_Tips,0,blmoveCommand,6,CMD_WRITE|CMD_DENYOOM|CMD_BLOCKING,ACL_CATEGORY_BLOCKING|ACL_CATEGORY_LIST|ACL_CATEGORY_SLOW|ACL_CATEGORY_WRITE,NULL,BLMOVE_Keyspecs,2,NULL,5),.args=BLMOVE_Args},

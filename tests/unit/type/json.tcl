@@ -313,6 +313,77 @@ start_server {tags {json}} {
         assert_equal {} [r json.type k {$.missing}]
         assert_equal {} [r json.type nokey]
     }
+
+    test {JSON.NUMINCRBY and JSON.NUMMULTBY result types follow the operands} {
+        r flushall
+        r json.set k . {{"i":10,"d":1.0,"s":"x"}}
+        assert_equal 15 [r json.numincrby k .i 5.0]
+        assert_equal number [r json.type k .i]
+        assert_equal 3 [r json.nummultby k .d 3]
+        assert_equal integer [r json.type k .d]
+        assert_equal 16 [r json.numincrby k .i 1]
+        assert_equal {[17,4,null]} [r json.numincrby k {$.*} 1]
+        assert_equal {[2]} [r json.nummultby k {$.d} 0.5]
+        assert_equal {[null]} [r json.numincrby k {$.s} 1]
+        assert_equal {[]} [r json.numincrby k {$.missing} 1]
+        assert_equal {{"i":17,"d":2,"s":"x"}} [r json.get k]
+        r json.set k .d 0.1
+        assert_equal 0.30000000000000004 [r json.numincrby k .d 0.2]
+    }
+
+    test {JSON.NUMINCRBY and JSON.NUMMULTBY errors} {
+        r flushall
+        r json.set k . {{"i":9223372036854775807,"d":1e308,"s":"x"}}
+        assert_error {WRONGTYPE Value is not a number} {r json.numincrby k .i x}
+        assert_error {WRONGTYPE Value is not a number} {r json.numincrby k .i {"1"}}
+        assert_error {WRONGTYPE JSON element is not a number} {r json.numincrby k .s 1}
+        assert_error {NONEXISTENT JSON path does not exist} {r json.numincrby k .missing 1}
+        assert_error {NONEXISTENT Document key does not exist} {r json.numincrby nokey . 1}
+        # Integer overflow falls back to doubles.
+        assert_equal 9.2233720368547758e+18 [r json.numincrby k .i 1]
+        assert_equal number [r json.type k .i]
+        assert_error {OVERFLOW Addition would overflow} {r json.numincrby k .d 1e308}
+        assert_error {OVERFLOW Multiplication would overflow} {r json.nummultby k .d 10}
+        assert_equal 1e308 [r json.get k .d]
+    }
+
+    test {JSON.NUMMULTBY refuses a NaN result} {
+        r flushall
+        r json.set k . {[9e308]}
+        assert_error {OVERFLOW Multiplication would overflow} {r json.nummultby k {[0]} 0}
+        assert_error {OVERFLOW Multiplication would overflow} {r json.nummultby k {$[0]} 0}
+        r json.set k . {[-9e308]}
+        assert_error {OVERFLOW Addition would overflow} {r json.numincrby k {$[0]} 9e308}
+        assert_equal {[-9e308]} [r json.get k]
+    }
+
+    test {JSON.TOGGLE replies JSON under a legacy path and integers under JSONPath} {
+        r flushall
+        r json.set k . {{"a":true,"b":{"a":false},"n":1}}
+        assert_equal false [r json.toggle k .a]
+        assert_equal {1 1} [r json.toggle k {$..a}]
+        assert_equal {0 {} {}} [r json.toggle k {$.*}]
+        assert_equal {} [r json.toggle k {$.missing}]
+        assert_error {WRONGTYPE JSON element is not a bool} {r json.toggle k .n}
+        assert_error {NONEXISTENT JSON path does not exist} {r json.toggle k .missing}
+        r json.set t . true
+        assert_equal false [r json.toggle t]
+        assert_equal {{"a":false,"b":{"a":true},"n":1}} [r json.get k]
+    }
+
+    test {JSON.CLEAR resets each type} {
+        r flushall
+        r json.set k . {{"o":{"a":1},"a":[1],"t":true,"f":false,"s":"x","e":"","i":5,"z":0,"d":1.5,"u":18446744073709551615,"m":-0.0,"n":null}}
+        assert_equal 7 [r json.clear k {$.*}]
+        assert_equal {{"o":{},"a":[],"t":false,"f":false,"s":"","e":"","i":0,"z":0,"d":0.0,"u":0.0,"m":-0.0,"n":null}} [r json.get k]
+        assert_equal 0 [r json.clear k {$.*}]
+        assert_equal 0 [r json.clear k .missing]
+        r json.set k . {{"a":{"b":[1]}}}
+        assert_equal 3 [r json.clear k {$..*}]
+        assert_equal 1 [r json.clear k]
+        assert_equal {{}} [r json.get k]
+        assert_error {NONEXISTENT Document key does not exist} {r json.clear nokey}
+    }
 }
 
 # RDB length encoding, see rdbSaveLen().

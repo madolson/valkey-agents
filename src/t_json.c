@@ -115,6 +115,17 @@ static int jsonLookup(client *c, robj *key, int write, robj **o) {
     return JSON_KEY_OK;
 }
 
+/* Look up a key a command needs to exist. Replies and returns NULL if it is
+ * missing or not JSON. */
+static jsonValue *jsonLookupOrReply(client *c, robj *key, int write) {
+    robj *o;
+    switch (jsonLookup(c, key, write, &o)) {
+    case JSON_KEY_MISSING: jsonReplyError(c, JSON_MSG_KEY_NOT_FOUND); return NULL;
+    case JSON_KEY_WRONGTYPE: jsonReplyError(c, JSON_MSG_NOT_DOC); return NULL;
+    }
+    return objectGetVal(o);
+}
+
 /* Like jsonLookupOrReply, but a missing key replies null. */
 static jsonValue *jsonLookupOrNull(client *c, robj *key) {
     robj *o;
@@ -129,6 +140,31 @@ static void jsonKeyModified(client *c, robj *key, const char *event) {
     signalModifiedKey(c, c->db, key);
     notifyKeyspaceEvent(NOTIFY_JSON, (char *)event, key, c->db->id);
     server.dirty++;
+}
+
+/* A command that failed after changing part of the document, as the module's
+ * do. The module then neither notifies nor replicates, so replicas and the AOF
+ * diverge. Propagate the whole document instead of the failed command, which
+ * a replica would have to answer with an error. */
+static void jsonKeyPartiallyModified(client *c, robj *key, const jsonValue *root) {
+    signalModifiedKey(c, c->db, key);
+    server.dirty++;
+    preventCommandPropagation(c);
+
+    robj *argv[4] = {createStringObject("JSON.SET", 8), key, createStringObject(".", 1),
+                     createObject(OBJ_STRING, jsonSerialize(sdsempty(), root, NULL, 0))};
+    alsoPropagate(c->db->id, argv, 4, PROPAGATE_AOF | PROPAGATE_REPL, c->slot);
+    decrRefCount(argv[0]);
+    decrRefCount(argv[2]);
+    decrRefCount(argv[3]);
+
+    /* JSON.SET at the root drops the TTL. */
+    long long when = getExpire(c->db, key);
+    if (when != -1) {
+        robj *expargv[3] = {shared.pexpireat, key, createStringObjectFromLongLong(when)};
+        alsoPropagate(c->db->id, expargv, 3, PROPAGATE_AOF | PROPAGATE_REPL, c->slot);
+        decrRefCount(expargv[2]);
+    }
 }
 
 static const char *jsonArgPath(client *c, int idx) {
@@ -169,6 +205,87 @@ static jsonPathCode jsonEvalRead(jsonPathResult *r, jsonValue *root, const char 
     jsonPathCode rc = jsonPathEval(r, root, path, JSON_PATH_READ);
     if (rc != JSON_PATH_OK && (!r->v2 || jsonPathIsSyntaxError(rc))) return rc;
     return JSON_PATH_OK;
+}
+
+static int jsonAnyOfType(const jsonPathResult *r, jsonType t1, jsonType t2) {
+    for (size_t i = 0; i < r->len; i++) {
+        jsonType t = r->matches[i].value->type;
+        if (t == t1 || t == t2) return 1;
+    }
+    return 0;
+}
+
+/* The module's check for legacy paths: there must be a match, and at least one
+ * match of the type the command works on. Replies and returns 0 if not. */
+static int jsonLegacyCheck(client *c, const jsonPathResult *r, jsonType t1, jsonType t2, const char *msg) {
+    if (r->v2) return 1;
+    if (r->len == 0) {
+        jsonReplyPathError(c, JSON_PATH_ERR_NOT_EXIST);
+        return 0;
+    }
+    if (!jsonAnyOfType(r, t1, t2)) {
+        jsonReplyError(c, msg);
+        return 0;
+    }
+    return 1;
+}
+
+static int jsonIsNumber(const jsonValue *v) {
+    return v->type == JSON_INTEGER || v->type == JSON_NUMBER;
+}
+
+typedef struct jsonDepthRef {
+    size_t depth;
+    size_t pos;
+} jsonDepthRef;
+
+static int jsonDepthRefCompare(const void *a, const void *b) {
+    const jsonDepthRef *x = a, *y = b;
+    if (x->depth != y->depth) return x->depth > y->depth ? -1 : 1;
+    return x->pos < y->pos ? -1 : (x->pos > y->pos);
+}
+
+/* Match positions deepest first, keeping the original order between equal
+ * depths. The module mutates in this order so that a container is changed
+ * only after everything matched inside it. */
+static size_t *jsonDeepestFirst(const jsonPathResult *r) {
+    jsonDepthRef *refs = zmalloc(sizeof(jsonDepthRef) * (r->len ? r->len : 1));
+    size_t *order = zmalloc(sizeof(size_t) * (r->len ? r->len : 1));
+    for (size_t i = 0; i < r->len; i++) {
+        refs[i].depth = r->matches[i].depth;
+        refs[i].pos = i;
+    }
+    qsort(refs, r->len, sizeof(jsonDepthRef), jsonDepthRefCompare);
+    for (size_t i = 0; i < r->len; i++) order[i] = refs[i].pos;
+    zfree(refs);
+    return order;
+}
+
+/* printf("%.17g"), the module's rendering of arithmetic results. */
+static int jsonFormatResult(double d, char *buf, size_t len) {
+    return snprintf(buf, len, "%.17g", d);
+}
+
+/* Reply for commands whose JSONPath form returns one integer or null per
+ * match, and whose legacy form returns the first (or last) non-null one. */
+static void jsonReplyIntegers(client *c, const jsonPathResult *r, const long long *vals, const unsigned char *isnull, int last) {
+    if (!r->v2) {
+        for (size_t k = 0; k < r->len; k++) {
+            size_t i = last ? r->len - 1 - k : k;
+            if (!isnull[i]) {
+                addReplyLongLong(c, vals[i]);
+                return;
+            }
+        }
+        serverPanic("JSON legacy reply without a value");
+    }
+    addReplyArrayLen(c, r->len);
+    for (size_t i = 0; i < r->len; i++) {
+        if (isnull[i])
+            addReplyNull(c);
+        else
+            addReplyLongLong(c, vals[i]);
+    }
 }
 
 /* ----------------------------------------------------------------------------
@@ -623,4 +740,249 @@ void jsonTypeCommand(client *c) {
         for (size_t i = 0; i < r.len; i++) addReplyStatus(c, jsonTypeName(r.matches[i].value));
     }
     jsonPathFree(&r);
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON.NUMINCRBY, JSON.NUMMULTBY
+ * ------------------------------------------------------------------------- */
+
+/* Whether d is exactly an int64_t, as the module's jsonutil_is_int64 decides
+ * it on x86, where an out of range conversion yields INT64_MIN. */
+static int jsonDoubleIsInt64(double d) {
+    if (!(d >= -9223372036854775808.0 && d < 9223372036854775808.0)) return 0;
+    return (double)(int64_t)d == d;
+}
+
+static void jsonReplyArithmetic(client *c, const jsonPathResult *r, const double *vals, const unsigned char *isnull) {
+    char buf[64];
+    if (!r->v2) {
+        for (size_t k = r->len; k > 0; k--) {
+            if (!isnull[k - 1]) {
+                int len = jsonFormatResult(vals[k - 1], buf, sizeof(buf));
+                addReplyBulkCBuffer(c, buf, len);
+                return;
+            }
+        }
+        serverPanic("JSON legacy arithmetic reply without a number");
+    }
+    sds s = sdsnewlen("[", 1);
+    for (size_t i = 0; i < r->len; i++) {
+        if (i) s = sdscatlen(s, ",", 1);
+        if (isnull[i]) {
+            s = sdscatlen(s, "null", 4);
+        } else {
+            int len = jsonFormatResult(vals[i], buf, sizeof(buf));
+            s = sdscatlen(s, buf, len);
+        }
+    }
+    s = sdscatlen(s, "]", 1);
+    addReplyBulkSds(c, s);
+}
+
+/* Store a non-integral arithmetic result as the module does: as a number whose
+ * text is %.17g of the double. */
+static void jsonStoreDouble(jsonValue *v, double d) {
+    char buf[64];
+    int len = jsonFormatResult(d, buf, sizeof(buf));
+    jsonReplace(v, jsonCreateNumber(buf, len));
+}
+
+static void jsonArithmeticCommand(client *c, int mult) {
+    const char *event = mult ? "json.nummultby" : "json.numincrby";
+    int err;
+    jsonValue *by = jsonParseArg(c, 3, &err, NULL);
+    if (by == NULL || !jsonIsNumber(by)) {
+        jsonFree(by);
+        jsonReplyError(c, JSON_MSG_VALUE_NOT_NUMBER);
+        return;
+    }
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) {
+        jsonFree(by);
+        return;
+    }
+
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonPathEval(&r, root, jsonArgPath(c, 2), JSON_PATH_READ);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        goto cleanup;
+    }
+    if (!jsonLegacyCheck(c, &r, JSON_INTEGER, JSON_NUMBER, JSON_MSG_NOT_NUMBER)) goto cleanup;
+
+    jsonPathDedupe(&r);
+    double *vals = zmalloc(sizeof(double) * (r.len ? r.len : 1));
+    unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+    const char *overflow = NULL;
+    size_t changed = 0;
+    double by_d = jsonGetDouble(by);
+    for (size_t i = 0; i < r.len; i++) {
+        jsonValue *v = r.matches[i].value;
+        if (!jsonIsNumber(v)) {
+            isnull[i] = 1;
+            continue;
+        }
+        double res;
+        if (!mult) {
+            if (v->type == JSON_INTEGER && by->type == JSON_INTEGER) {
+                int64_t a = v->integer, b = by->integer;
+                if ((a >= 0 && b <= INT64_MAX - a) || (a < 0 && b >= INT64_MIN - a)) {
+                    v->integer = a + b;
+                    vals[i] = (double)v->integer;
+                    changed++;
+                    continue;
+                }
+            }
+            res = jsonGetDouble(v) + by_d;
+        } else {
+            res = jsonGetDouble(v) * by_d;
+        }
+        /* The module stores a NaN result (infinity times zero, or infinities
+         * of opposite sign added), which is not JSON, and asserts replying to a
+         * legacy path. Refuse it like an overflow. */
+        if (isinf(res) || isnan(res)) {
+            overflow = mult ? JSON_MSG_MULT_OVERFLOW : JSON_MSG_ADD_OVERFLOW;
+            break;
+        }
+        if (mult && jsonDoubleIsInt64(res))
+            jsonReplace(v, jsonCreateInteger((int64_t)res));
+        else
+            jsonStoreDouble(v, res);
+        vals[i] = res;
+        changed++;
+    }
+    if (overflow) {
+        if (changed) jsonKeyPartiallyModified(c, c->argv[1], root);
+        jsonReplyError(c, overflow);
+    } else {
+        jsonKeyModified(c, c->argv[1], event);
+        jsonReplyArithmetic(c, &r, vals, isnull);
+    }
+    zfree(vals);
+    zfree(isnull);
+cleanup:
+    jsonPathFree(&r);
+    jsonFree(by);
+}
+
+/* JSON.NUMINCRBY key path number */
+void jsonNumincrbyCommand(client *c) {
+    jsonArithmeticCommand(c, 0);
+}
+
+/* JSON.NUMMULTBY key path number */
+void jsonNummultbyCommand(client *c) {
+    jsonArithmeticCommand(c, 1);
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON.TOGGLE, JSON.CLEAR
+ * ------------------------------------------------------------------------- */
+
+/* JSON.TOGGLE key [path] */
+void jsonToggleCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonEvalRead(&r, root, jsonOptionalPath(c));
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        goto cleanup;
+    }
+    if (!jsonLegacyCheck(c, &r, JSON_TRUE, JSON_FALSE, JSON_MSG_NOT_BOOL)) goto cleanup;
+
+    jsonPathDedupe(&r);
+    long long *vals = zmalloc(sizeof(long long) * (r.len ? r.len : 1));
+    unsigned char *isnull = zcalloc(r.len ? r.len : 1);
+    for (size_t i = 0; i < r.len; i++) {
+        jsonValue *v = r.matches[i].value;
+        if (v->type == JSON_TRUE) {
+            v->type = JSON_FALSE;
+            vals[i] = 0;
+        } else if (v->type == JSON_FALSE) {
+            v->type = JSON_TRUE;
+            vals[i] = 1;
+        } else {
+            isnull[i] = 1;
+        }
+    }
+    jsonKeyModified(c, c->argv[1], "json.toggle");
+    if (!r.v2) {
+        /* Legacy paths reply with the first new value as JSON text. */
+        for (size_t i = 0; i < r.len; i++) {
+            if (!isnull[i]) {
+                if (vals[i])
+                    addReplyBulkCBuffer(c, "true", 4);
+                else
+                    addReplyBulkCBuffer(c, "false", 5);
+                break;
+            }
+        }
+    } else {
+        jsonReplyIntegers(c, &r, vals, isnull, 0);
+    }
+    zfree(vals);
+    zfree(isnull);
+cleanup:
+    jsonPathFree(&r);
+}
+
+/* Reset one value as JSON.CLEAR does. Returns 1 if it changed. */
+static int jsonClearValue(jsonValue *v) {
+    switch (v->type) {
+    case JSON_ARRAY:
+        if (v->array.len == 0) return 0;
+        jsonReplace(v, jsonCreateArray());
+        return 1;
+    case JSON_OBJECT:
+        if (v->object.len == 0) return 0;
+        jsonReplace(v, jsonCreateObject());
+        return 1;
+    case JSON_TRUE: v->type = JSON_FALSE; return 1;
+    case JSON_STRING:
+        if (sdslen(v->string) == 0) return 0;
+        jsonReplace(v, jsonCreateString("", 0));
+        return 1;
+    case JSON_INTEGER:
+        if (v->integer == 0) return 0;
+        v->integer = 0;
+        return 1;
+    case JSON_NUMBER:
+        if (!(v->number.value < 0.0 || v->number.value > 0.0)) return 0;
+        jsonReplace(v, jsonCreateNumber("0.0", 3));
+        return 1;
+    default: return 0;
+    }
+}
+
+/* JSON.CLEAR key [path] */
+void jsonClearCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrReply(c, c->argv[1], 1);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonPathEval(&r, root, jsonOptionalPath(c), JSON_PATH_READ);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        jsonPathFree(&r);
+        return;
+    }
+    jsonPathDedupe(&r);
+    size_t *order = jsonDeepestFirst(&r);
+    long long cleared = 0;
+    for (size_t k = 0; k < r.len; k++) cleared += jsonClearValue(r.matches[order[k]].value);
+    zfree(order);
+    jsonPathFree(&r);
+    jsonKeyModified(c, c->argv[1], "json.clear");
+    addReplyLongLong(c, cleared);
 }
