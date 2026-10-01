@@ -14071,7 +14071,10 @@ void moduleUnloadAllModules(void) {
 
         const char *errmsg = NULL;
         if (moduleUnloadInternal(module, &errmsg) == C_ERR) {
-            serverLog(LL_WARNING, "Failed to unload module %s: %s", module->name, errmsg);
+            /* A static module with a data type can never unload, so this is
+             * expected on every shutdown of a default build. */
+            serverLog(module->is_static_module ? LL_VERBOSE : LL_WARNING,
+                      "Failed to unload module %s: %s", module->name, errmsg);
         }
     }
 }
