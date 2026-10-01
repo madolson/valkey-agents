@@ -25,6 +25,7 @@ set(VALKEY_SERVER_SRCS
     ${CMAKE_SOURCE_DIR}/src/memory_prefetch.c
     ${CMAKE_SOURCE_DIR}/src/io_threads.c
     ${CMAKE_SOURCE_DIR}/src/json.c
+    ${CMAKE_SOURCE_DIR}/src/json_path.c
     ${CMAKE_SOURCE_DIR}/src/networking.c
     ${CMAKE_SOURCE_DIR}/src/util.c
     ${CMAKE_SOURCE_DIR}/src/object.c
