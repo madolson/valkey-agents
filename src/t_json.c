@@ -194,8 +194,8 @@ static jsonValue *jsonParseArg(client *c, int idx, int *err, size_t *depth) {
     return jsonParse(s, sdslen(s), jsonPathLimit(c), err, depth);
 }
 
-/* json.max-document-size, which the module does not apply to commands from
- * its primary. */
+/* json.max-document-size. The module exempts commands from its primary; the
+ * AOF is exempt too, so that replaying it cannot drop a write. */
 static int jsonSizeLimitExceeded(client *c, size_t size) {
     return server.json_max_document_size > 0 && !mustObeyClient(c) &&
            size > (unsigned long long)server.json_max_document_size;
@@ -1534,4 +1534,314 @@ void jsonArrindexCommand(client *c) {
 cleanup:
     jsonFree(needle);
     jsonPathFree(&r);
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON.RESP
+ * ------------------------------------------------------------------------- */
+
+static void jsonReplyResp(client *c, const jsonValue *v) {
+    char buf[JSON_DOUBLE_BUFSIZE];
+    switch (v->type) {
+    case JSON_OBJECT:
+        addReplyArrayLen(c, v->object.len + 1);
+        addReplyStatus(c, "{");
+        for (size_t i = 0; i < v->object.len; i++) {
+            const jsonMember *m = &v->object.members[i];
+            addReplyArrayLen(c, 2);
+            addReplyBulkCBuffer(c, m->name, sdslen(m->name));
+            jsonReplyResp(c, m->value);
+        }
+        break;
+    case JSON_ARRAY:
+        addReplyArrayLen(c, v->array.len + 1);
+        addReplyStatus(c, "[");
+        for (size_t i = 0; i < v->array.len; i++) jsonReplyResp(c, v->array.items[i]);
+        break;
+    case JSON_NULL: addReplyNull(c); break;
+    case JSON_TRUE: addReplyStatus(c, "true"); break;
+    case JSON_FALSE: addReplyStatus(c, "false"); break;
+    case JSON_INTEGER: addReplyLongLong(c, v->integer); break;
+    case JSON_NUMBER: addReplyBulkCBuffer(c, buf, jsonFormatDouble(v->number.value, buf)); break;
+    case JSON_STRING: addReplyBulkCBuffer(c, v->string, sdslen(v->string)); break;
+    }
+}
+
+/* JSON.RESP key [path] */
+void jsonRespCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrNull(c, c->argv[1]);
+    if (root == NULL) return;
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonEvalRead(&r, root, jsonOptionalPath(c));
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+    } else if (r.len == 0) {
+        if (!r.v2)
+            jsonReplyPathError(c, JSON_PATH_ERR_NOT_EXIST);
+        else
+            addReplyArrayLen(c, 0);
+    } else if (!r.v2) {
+        /* The module writes one reply per match here, more than the command
+         * owns. One reply, for the first match, keeps the protocol intact. */
+        jsonReplyResp(c, r.matches[0].value);
+    } else {
+        addReplyArrayLen(c, r.len);
+        for (size_t i = 0; i < r.len; i++) jsonReplyResp(c, r.matches[i].value);
+    }
+    jsonPathFree(&r);
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON.MERGE
+ * ------------------------------------------------------------------------- */
+
+static int jsonIsAncestor(sds ancestor, sds descendant) {
+    size_t len = sdslen(ancestor);
+    return len < sdslen(descendant) && !memcmp(ancestor, descendant, len) && descendant[len] == '/';
+}
+
+/* RFC 7396 MergePatch(existing, patch), existing NULL standing for {}. Nulls
+ * in an object patch delete members; any other patch replaces the target. */
+static jsonValue *jsonMergeValues(const jsonValue *existing, const jsonValue *patch, size_t depth, size_t limit) {
+    if (depth > limit || patch->type != JSON_OBJECT) return jsonDup(patch);
+    if (existing && existing->type != JSON_OBJECT) existing = NULL;
+    if (patch->object.len == 0) return existing ? jsonDup(existing) : jsonCreateObject();
+
+    jsonValue *merged = jsonCreateObject();
+    size_t n = existing ? existing->object.len : 0;
+    for (size_t i = 0; i < n; i++) {
+        const jsonMember *m = &existing->object.members[i];
+        const jsonValue *p = jsonObjectFind(patch, m->name, sdslen(m->name), NULL);
+        if (p && p->type == JSON_NULL) continue;
+        jsonValue *v = p ? jsonMergeValues(m->value, p, depth + 1, limit) : jsonDup(m->value);
+        jsonObjectSet(merged, m->name, sdslen(m->name), v);
+    }
+    for (size_t i = 0; i < patch->object.len; i++) {
+        const jsonMember *m = &patch->object.members[i];
+        if (m->value->type == JSON_NULL || jsonObjectFind(merged, m->name, sdslen(m->name), NULL)) continue;
+        jsonObjectSet(merged, m->name, sdslen(m->name), jsonMergeValues(NULL, m->value, depth + 1, limit));
+    }
+    return merged;
+}
+
+/* Merge the patch into every target of path, all or nothing. Where '..'
+ * matches both a value and its descendant only the outer one is merged.
+ * Replies and returns 0 on failure. */
+static int jsonMergeAtPath(client *c, jsonValue *root, const char *path) {
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonPathEval(&r, root, path, JSON_PATH_WRITE);
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        jsonPathFree(&r);
+        return 0;
+    }
+    int err;
+    size_t depth;
+    jsonValue *patch = jsonParseArg(c, 3, &err, &depth);
+    if (patch == NULL) {
+        jsonReplyParseError(c, err);
+        jsonPathFree(&r);
+        return 0;
+    }
+
+    jsonPathDedupe(&r);
+    jsonValue **merged = zcalloc(sizeof(jsonValue *) * (r.len ? r.len : 1));
+    size_t pending = 0;
+    for (size_t i = 0; i < r.len; i++) {
+        int covered = 0;
+        for (size_t j = 0; j < r.len && !covered; j++) {
+            if (j != i && jsonIsAncestor(r.matches[j].pointer, r.matches[i].pointer)) covered = 1;
+        }
+        if (covered) continue;
+        sds ptr = r.matches[i].pointer;
+        jsonValue *existing = jsonPointerGet(root, ptr, sdslen(ptr));
+        if (existing == NULL) continue;
+        merged[i] = jsonMergeValues(existing, patch, 0, jsonPathLimit(c));
+        pending++;
+    }
+
+    const char *msg = NULL;
+    if (pending || r.ninserts) {
+        if (r.max_depth + depth > jsonPathLimit(c))
+            msg = JSON_MSG_PATH_LIMIT;
+        else if (jsonSizeLimitExceeded(c, jsonDocumentSize(c, root) + (pending + r.ninserts) * jsonDocumentSize(c, patch)))
+            msg = JSON_MSG_SIZE_LIMIT;
+    }
+    if (msg) {
+        jsonReplyError(c, msg);
+    } else {
+        for (size_t i = 0; i < r.len; i++) {
+            if (merged[i] == NULL) continue;
+            sds ptr = r.matches[i].pointer;
+            jsonReplace(jsonPointerGet(root, ptr, sdslen(ptr)), merged[i]);
+            merged[i] = NULL;
+        }
+        if (r.ninserts) {
+            jsonValue *insert = jsonMergeValues(NULL, patch, 0, jsonPathLimit(c));
+            jsonPathCommitInserts(root, &r, insert);
+            jsonFree(insert);
+        }
+    }
+    for (size_t i = 0; i < r.len; i++) jsonFree(merged[i]);
+    zfree(merged);
+    jsonFree(patch);
+    jsonPathFree(&r);
+    return msg == NULL;
+}
+
+/* JSON.MERGE key path json */
+void jsonMergeCommand(client *c) {
+    robj *o;
+    int status = jsonLookup(c, c->argv[1], 1, &o);
+    if (status == JSON_KEY_WRONGTYPE) {
+        jsonReplyError(c, JSON_MSG_NOT_DOC);
+        return;
+    }
+    const char *path = jsonArgPath(c, 2);
+    int root_path = jsonPathIsRoot(path);
+    if (root_path) path = ".";
+    if (status == JSON_KEY_MISSING) {
+        if (!root_path) {
+            jsonReplyError(c, JSON_MSG_NEW_KEY_NOT_ROOT);
+            return;
+        }
+        /* A new document is MergePatch({}, patch). */
+        jsonValue *root = jsonCreateObject();
+        if (!jsonMergeAtPath(c, root, path)) {
+            jsonFree(root);
+            return;
+        }
+        jsonSetKey(c, c->argv[1], root);
+    } else if (!jsonMergeAtPath(c, objectGetVal(o), path)) {
+        return;
+    }
+    jsonKeyModified(c, c->argv[1], "json.merge");
+    addReply(c, shared.ok);
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON.DEBUG
+ * ------------------------------------------------------------------------- */
+
+static size_t jsonMaxPathDepth(const jsonValue *v, size_t depth) {
+    size_t max = depth, n = jsonChildCount(v);
+    for (size_t i = 0; i < n; i++) {
+        size_t d = jsonMaxPathDepth(jsonChildAt(v, i), depth + 1);
+        if (d > max) max = d;
+    }
+    return max;
+}
+
+static size_t jsonFieldCount(const jsonValue *v) {
+    size_t count = 1, n = jsonChildCount(v);
+    for (size_t i = 0; i < n; i++) count += jsonFieldCount(jsonChildAt(v, i));
+    return count;
+}
+
+/* JSON.DEBUG MEMORY|FIELDS key [path] */
+static void jsonDebugPathCommand(client *c, int fields) {
+    if (c->argc > 4) {
+        addReplyErrorArity(c);
+        return;
+    }
+    jsonValue *root = jsonLookupOrNull(c, c->argv[2]);
+    if (root == NULL) return;
+    const char *path = c->argc > 3 ? jsonArgPath(c, 3) : ".";
+    if (!fields && c->argc == 3) {
+        /* The whole document's size without walking a path. */
+        addReplyLongLong(c, jsonMemoryUsage(root));
+        return;
+    }
+    jsonPathResult r;
+    jsonPathInit(&r);
+    jsonPathCode rc = jsonEvalRead(&r, root, path);
+    if (rc == JSON_PATH_OK && !r.v2 && r.len == 0) rc = JSON_PATH_ERR_NOT_EXIST;
+    if (rc != JSON_PATH_OK) {
+        jsonReplyPathError(c, rc);
+        jsonPathFree(&r);
+        return;
+    }
+    if (r.v2) addReplyArrayLen(c, r.len);
+    for (size_t i = 0; i < (r.v2 ? r.len : 1); i++) {
+        jsonValue *v = r.matches[i].value;
+        size_t n;
+        if (fields) {
+            n = jsonFieldCount(v);
+            if (v->type == JSON_OBJECT || v->type == JSON_ARRAY) n--;
+        } else {
+            n = jsonMemoryUsage(v);
+        }
+        addReplyLongLong(c, n);
+    }
+    jsonPathFree(&r);
+}
+
+void jsonDebugMemoryCommand(client *c) {
+    jsonDebugPathCommand(c, 0);
+}
+
+void jsonDebugFieldsCommand(client *c) {
+    jsonDebugPathCommand(c, 1);
+}
+
+/* JSON.DEBUG DEPTH key */
+void jsonDebugDepthCommand(client *c) {
+    jsonValue *root = jsonLookupOrNull(c, c->argv[2]);
+    if (root == NULL) return;
+    addReplyLongLong(c, jsonMaxPathDepth(root, 0));
+}
+
+/* JSON.DEBUG MAX-DEPTH-KEY and MAX-SIZE-KEY: scan the selected database for
+ * the deepest or largest document. The first key found wins a tie. */
+static void jsonDebugMaxKeyCommand(client *c, int size) {
+    kvstoreIterator *kvs_it = kvstoreIteratorInit(c->db->keys, HASHTABLE_ITER_SAFE);
+    size_t max = 0;
+    sds name = NULL;
+    void *next;
+    while (kvstoreIteratorNext(kvs_it, &next)) {
+        robj *o = next;
+        if (objectGetType(o) != OBJ_JSON) continue;
+        jsonValue *root = objectGetVal(o);
+        size_t n = size ? jsonMemoryUsage(root) : jsonMaxPathDepth(root, 0);
+        if (n > max) {
+            max = n;
+            name = objectGetKey(o);
+        }
+    }
+    addReplyArrayLen(c, 2);
+    addReplyLongLong(c, max);
+    /* The module replies with the name as a C string. */
+    addReplyStatus(c, name ? name : "");
+    kvstoreIteratorRelease(kvs_it);
+}
+
+void jsonDebugMaxDepthKeyCommand(client *c) {
+    jsonDebugMaxKeyCommand(c, 0);
+}
+
+void jsonDebugMaxSizeKeyCommand(client *c) {
+    jsonDebugMaxKeyCommand(c, 1);
+}
+
+/* JSON.DEBUG HELP */
+void jsonDebugHelpCommand(client *c) {
+    static const char *help[] = {
+        "JSON.DEBUG MEMORY <key> [path] - report memory size (bytes). Without path reports document size without "
+        "keys. With path reports size including keys",
+        "JSON.DEBUG DEPTH <key> - report the maximum path depth of the JSON document.",
+        "JSON.DEBUG FIELDS <key> [path] - report number of fields in the JSON element. Path defaults to root if not "
+        "provided.",
+        "JSON.DEBUG HELP - print help message.",
+        "------- DANGER, LONG RUNNING COMMANDS, DON'T USE ON PRODUCTION SYSTEM --------",
+        "JSON.DEBUG MAX-DEPTH-KEY - Find JSON key with maximum depth",
+        "JSON.DEBUG MAX-SIZE-KEY  - Find JSON key with largest memory size",
+    };
+    addReplyArrayLen(c, sizeof(help) / sizeof(help[0]));
+    for (size_t i = 0; i < sizeof(help) / sizeof(help[0]); i++) addReplyStatus(c, help[i]);
 }

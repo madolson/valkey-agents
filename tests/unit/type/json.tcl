@@ -148,6 +148,17 @@ start_server {tags {json needs:debug}} {
     }
 }
 
+# Raw protocol reply of a command: its first line and the next n lines.
+proc json_raw {n args} {
+    r readraw 1
+    set reply [list [r {*}$args]]
+    for {set i 0} {$i < $n} {incr i} {
+        lappend reply [r read]
+    }
+    r readraw 0
+    return $reply
+}
+
 start_server {tags {json}} {
     test {JSON.SET and JSON.GET at the root and at paths} {
         r flushall
@@ -523,6 +534,152 @@ start_server {tags {json}} {
         assert_error {WRONGTYPE JSON element is not an object} {r json.objlen k .n}
         assert_error {NONEXISTENT JSON path does not exist} {r json.objlen k .missing}
         assert_equal {} [r json.objlen nokey]
+    }
+
+    test {JSON.RESP re-renders numbers as doubles} {
+        r flushall
+        r json.set k . {{"a":[1,1E2,0.1,-0.0,18446744073709551615,9e308],"s":"x","t":true,"f":false,"n":null}}
+        set numbers [list {[} 1 100.0 0.1 -0.0 18446744073709552000.0 1.797693134862316e308]
+        set resp [r json.resp k]
+        assert_equal 6 [llength $resp]
+        assert_equal "\{" [lindex $resp 0]
+        assert_equal [list a $numbers] [lindex $resp 1]
+        assert_equal {s x} [lindex $resp 2]
+        assert_equal {t true} [lindex $resp 3]
+        assert_equal {f false} [lindex $resp 4]
+        assert_equal {n {}} [lindex $resp 5]
+        assert_equal [list $numbers] [r json.resp k {$.a}]
+        assert_equal {} [r json.resp k {$.missing}]
+        assert_error {NONEXISTENT JSON path does not exist} {r json.resp k .missing}
+        assert_equal {} [r json.resp nokey]
+        # A legacy path with several matches replies once, for the first.
+        r json.set d . {{"a":{"a":1}}}
+        assert_equal [list "\{" {a 1}] [r json.resp d ..a]
+        assert_equal PONG [r ping]
+    }
+
+    foreach proto {2 3} {
+        test "JSON replies in RESP$proto" {
+            r hello $proto
+            r flushall
+            r json.set k . {{"a":[1,null],"s":"x","n":1,"t":true}}
+            set null [expr {$proto == 2 ? {$-1} : {_}}]
+            assert_equal [list $null] [json_raw 0 json.get nokey]
+            assert_equal [list $null] [json_raw 0 json.type k .missing]
+            assert_equal [list *2 :1 $null] [json_raw 2 json.strlen k {$['s','n']}]
+            assert_equal [list *2 :2 $null] [json_raw 2 json.arrlen k {$['a','n']}]
+            assert_equal [list *2 :0 $null] [json_raw 2 json.toggle k {$['t','n']}]
+            assert_equal [list *2 +string +integer] [json_raw 2 json.type k {$['s','n']}]
+            assert_equal [list *3 {+[} :1 $null] [json_raw 3 json.resp k .a]
+            assert_equal [list *0] [json_raw 0 json.resp k {$.missing}]
+            assert_equal [list *2 $null $null] [json_raw 2 json.mget nokey nokey2 .a]
+            assert_equal [list *2 {$1} 1 $null] [json_raw 3 json.arrpop k {$['a','s']} 0]
+            assert_equal [list {$8} {[null,1]}] [json_raw 1 json.numincrby k {$['t','n']} 0]
+            r hello 2
+        }
+    }
+
+    test {JSON.MERGE follows RFC 7396} {
+        r flushall
+        r json.set k . {{"a":"b","c":{"d":"e","f":"g"},"x":[1]}}
+        assert_equal OK [r json.merge k . {{"a":"z","c":{"f":null},"x":{"y":null},"n":{"m":null,"o":1}}}]
+        assert_equal {{"a":"z","c":{"d":"e"},"x":{},"n":{"o":1}}} [r json.get k]
+        assert_equal OK [r json.merge k .c {[1]}]
+        assert_equal {[1]} [r json.get k .c]
+        assert_equal OK [r json.merge k {$.new} {{"p":null,"q":2}}]
+        assert_equal {{"q":2}} [r json.get k .new]
+        assert_equal OK [r json.merge k . null]
+        assert_equal null [r json.get k]
+        assert_equal OK [r json.merge new . {{"a":null,"b":1}}]
+        assert_equal {{"b":1}} [r json.get new]
+        assert_error {SYNTAXERR A new Valkey key's path must be root} {r json.merge new2 .a 1}
+        assert_error {SYNTAXERR*} {r json.merge new . {[}}
+        assert_equal 0 [r exists new2]
+    }
+
+    test {JSON.MERGE merges only the outermost of nested matches} {
+        r flushall
+        r json.set k . {{"a":{"a":{"b":1}}}}
+        assert_equal OK [r json.merge k {$..a} {{"c":2}}]
+        assert_equal {{"a":{"a":{"b":1},"c":2}}} [r json.get k]
+    }
+
+    test {JSON.DEBUG} {
+        r flushall
+        r json.set k . {{"a":{"b":[1,{}]},"c":"x"}}
+        assert_equal 3 [r json.debug depth k]
+        assert_equal 5 [r json.debug fields k]
+        assert_equal 3 [r json.debug fields k .a]
+        assert_equal {3 1} [r json.debug fields k {$['a','c']}]
+        assert_morethan [r json.debug memory k] 0
+        assert_equal 2 [llength [r json.debug memory k {$['a','c']}]]
+        assert_equal {} [r json.debug memory nokey]
+        assert_equal {} [r json.debug depth nokey]
+        assert_error {NONEXISTENT JSON path does not exist} {r json.debug fields k .missing}
+        assert_equal {3 k} [r json.debug max-depth-key]
+        assert_equal k [lindex [r json.debug max-size-key] 1]
+        assert_match {JSON.DEBUG MEMORY*} [lindex [r json.debug help] 0]
+        assert_error {*unknown subcommand 'KEYTABLE-CHECK'. Try JSON.DEBUG HELP.} {r json.debug KEYTABLE-CHECK}
+        assert_error {*wrong number of arguments*} {r json.debug depth k extra}
+        r set s v
+        assert_error {WRONGTYPE Not a JSON document key} {r json.debug depth s}
+    }
+
+    test {Wrong-typed keys reply the module's WRONGTYPE error} {
+        r flushall
+        r set s v
+        foreach cmd {
+            {json.get s} {json.del s} {json.type s} {json.strlen s} {json.objlen s} {json.objkeys s}
+            {json.arrlen s} {json.resp s} {json.clear s} {json.toggle s} {json.arrpop s}
+            {json.numincrby s . 1} {json.strappend s {"x"}} {json.arrappend s . 1} {json.arrindex s . 1}
+            {json.arrinsert s . 0 1} {json.arrtrim s . 0 1} {json.merge s . 1}
+        } {
+            assert_error {WRONGTYPE Not a JSON document key} {r {*}$cmd}
+        }
+    }
+
+    test {JSON commands fire keyspace events in class j} {
+        r flushall
+        r config set notify-keyspace-events Kj
+        set rd [valkey_deferring_client]
+        $rd psubscribe {__keyspace@*__:*}
+        $rd read
+        r json.set k . {{"a":[1],"s":"x","n":1,"t":true}}
+        r json.mset k .n 2
+        r json.numincrby k .n 1
+        r json.nummultby k .n 2
+        r json.strappend k .s {"y"}
+        r json.toggle k .t
+        r json.arrappend k .a 2
+        r json.arrinsert k .a 0 0
+        r json.arrpop k .a
+        r json.arrtrim k .a 0 0
+        r json.clear k .a
+        r json.merge k . {{"m":1}}
+        r json.del k .m
+        r json.forget k
+        # Reads and failed writes fire nothing.
+        r json.get nokey
+        catch {r json.numincrby k .missing 1}
+        r set s v
+        foreach event {json.set json.mset json.numincrby json.nummultby json.strappend json.toggle json.arrappend
+                       json.arrinsert json.arrpop json.arrtrim json.clear json.merge json.del json.del} {
+            assert_equal [list pmessage {__keyspace@*__:*} __keyspace@9__:k $event] [$rd read]
+        }
+        $rd close
+        r config set notify-keyspace-events ""
+    } {OK} {needs:config-notify-keyspace-events singledb:skip}
+
+    test {JSON commands are in the json ACL category with the module's key specs} {
+        foreach cmd {json.set json.get json.mget json.mset json.del json.forget json.type json.numincrby
+                     json.nummultby json.strappend json.strlen json.arrappend json.arrindex json.arrinsert
+                     json.arrlen json.arrpop json.arrtrim json.objkeys json.objlen json.clear json.toggle
+                     json.resp json.merge json.debug} {
+            assert_not_equal -1 [lsearch -exact [r acl cat json] $cmd]
+        }
+        assert_equal {a b} [r command getkeys json.mset a . 1 b . 2]
+        assert_equal {a b} [r command getkeys json.mget a b .]
+        assert_equal {k} [r command getkeys json.debug memory k]
     }
 }
 

@@ -3888,6 +3888,14 @@ void jsonObjkeysCommand(client *c);
 void jsonObjlenCommand(client *c);
 void jsonClearCommand(client *c);
 void jsonToggleCommand(client *c);
+void jsonRespCommand(client *c);
+void jsonMergeCommand(client *c);
+void jsonDebugMemoryCommand(client *c);
+void jsonDebugFieldsCommand(client *c);
+void jsonDebugDepthCommand(client *c);
+void jsonDebugHelpCommand(client *c);
+void jsonDebugMaxDepthKeyCommand(client *c);
+void jsonDebugMaxSizeKeyCommand(client *c);
 
 /* Pub / Sub */
 int pubsubUnsubscribeAllChannels(client *c, int notify);

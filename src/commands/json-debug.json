@@ -1,0 +1,17 @@
+{
+    "JSON.DEBUG": {
+        "summary": "A container for JSON debugging commands.",
+        "complexity": "Depends on subcommand.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": -2,
+        "command_flags": [
+            "READONLY"
+        ],
+        "acl_categories": [
+            "JSON",
+            "READ",
+            "SLOW"
+        ]
+    }
+}

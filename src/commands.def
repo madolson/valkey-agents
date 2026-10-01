@@ -4850,6 +4850,159 @@ struct COMMAND_ARG JSON_CLEAR_Args[] = {
 {MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
 };
 
+/********** JSON_DEBUG DEPTH ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_DEBUG DEPTH history */
+#define JSON_DEBUG_DEPTH_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_DEBUG DEPTH tips */
+#define JSON_DEBUG_DEPTH_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_DEBUG DEPTH key specs */
+keySpec JSON_DEBUG_DEPTH_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={2},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_DEBUG DEPTH argument table */
+struct COMMAND_ARG JSON_DEBUG_DEPTH_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** JSON_DEBUG FIELDS ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_DEBUG FIELDS history */
+#define JSON_DEBUG_FIELDS_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_DEBUG FIELDS tips */
+#define JSON_DEBUG_FIELDS_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_DEBUG FIELDS key specs */
+keySpec JSON_DEBUG_FIELDS_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={2},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_DEBUG FIELDS argument table */
+struct COMMAND_ARG JSON_DEBUG_FIELDS_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
+/********** JSON_DEBUG HELP ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_DEBUG HELP history */
+#define JSON_DEBUG_HELP_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_DEBUG HELP tips */
+#define JSON_DEBUG_HELP_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_DEBUG HELP key specs */
+#define JSON_DEBUG_HELP_Keyspecs NULL
+#endif
+
+/********** JSON_DEBUG MAX_DEPTH_KEY ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_DEBUG MAX_DEPTH_KEY history */
+#define JSON_DEBUG_MAX_DEPTH_KEY_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_DEBUG MAX_DEPTH_KEY tips */
+#define JSON_DEBUG_MAX_DEPTH_KEY_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_DEBUG MAX_DEPTH_KEY key specs */
+#define JSON_DEBUG_MAX_DEPTH_KEY_Keyspecs NULL
+#endif
+
+/********** JSON_DEBUG MAX_SIZE_KEY ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_DEBUG MAX_SIZE_KEY history */
+#define JSON_DEBUG_MAX_SIZE_KEY_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_DEBUG MAX_SIZE_KEY tips */
+#define JSON_DEBUG_MAX_SIZE_KEY_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_DEBUG MAX_SIZE_KEY key specs */
+#define JSON_DEBUG_MAX_SIZE_KEY_Keyspecs NULL
+#endif
+
+/********** JSON_DEBUG MEMORY ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_DEBUG MEMORY history */
+#define JSON_DEBUG_MEMORY_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_DEBUG MEMORY tips */
+#define JSON_DEBUG_MEMORY_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_DEBUG MEMORY key specs */
+keySpec JSON_DEBUG_MEMORY_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={2},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_DEBUG MEMORY argument table */
+struct COMMAND_ARG JSON_DEBUG_MEMORY_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
+/* JSON_DEBUG command table */
+struct COMMAND_STRUCT JSON_DEBUG_Subcommands[] = {
+{MAKE_CMD("depth","Returns the maximum nesting depth of a document.","O(N) where N is the number of values in the document.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEBUG_DEPTH_History,0,JSON_DEBUG_DEPTH_Tips,0,jsonDebugDepthCommand,3,0,ACL_CATEGORY_SLOW,NULL,JSON_DEBUG_DEPTH_Keyspecs,1,NULL,1),.args=JSON_DEBUG_DEPTH_Args},
+{MAKE_CMD("fields","Returns the number of values in the values at a path.","O(N) where N is the number of values in the document.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEBUG_FIELDS_History,0,JSON_DEBUG_FIELDS_Tips,0,jsonDebugFieldsCommand,-3,0,ACL_CATEGORY_SLOW,NULL,JSON_DEBUG_FIELDS_Keyspecs,1,NULL,2),.args=JSON_DEBUG_FIELDS_Args},
+{MAKE_CMD("help","Returns helpful text about the different subcommands.","O(1)","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEBUG_HELP_History,0,JSON_DEBUG_HELP_Tips,0,jsonDebugHelpCommand,2,0,ACL_CATEGORY_SLOW,NULL,JSON_DEBUG_HELP_Keyspecs,0,NULL,0)},
+{MAKE_CMD("max-depth-key","Returns the deepest document in the database and its depth.","O(N) where N is the number of values in the database.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEBUG_MAX_DEPTH_KEY_History,0,JSON_DEBUG_MAX_DEPTH_KEY_Tips,0,jsonDebugMaxDepthKeyCommand,2,0,ACL_CATEGORY_SLOW,NULL,JSON_DEBUG_MAX_DEPTH_KEY_Keyspecs,0,NULL,0)},
+{MAKE_CMD("max-size-key","Returns the largest document in the database and its size.","O(N) where N is the number of values in the database.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEBUG_MAX_SIZE_KEY_History,0,JSON_DEBUG_MAX_SIZE_KEY_Tips,0,jsonDebugMaxSizeKeyCommand,2,0,ACL_CATEGORY_SLOW,NULL,JSON_DEBUG_MAX_SIZE_KEY_Keyspecs,0,NULL,0)},
+{MAKE_CMD("memory","Returns the memory used by the values at a path, in bytes.","O(N) where N is the number of values in the document.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEBUG_MEMORY_History,0,JSON_DEBUG_MEMORY_Tips,0,jsonDebugMemoryCommand,-3,0,ACL_CATEGORY_SLOW,NULL,JSON_DEBUG_MEMORY_Keyspecs,1,NULL,2),.args=JSON_DEBUG_MEMORY_Args},
+{0}
+};
+
+/********** JSON_DEBUG ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_DEBUG history */
+#define JSON_DEBUG_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_DEBUG tips */
+#define JSON_DEBUG_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_DEBUG key specs */
+#define JSON_DEBUG_Keyspecs NULL
+#endif
+
 /********** JSON_DEL ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -4927,6 +5080,32 @@ struct COMMAND_ARG JSON_GET_Args[] = {
 {MAKE_ARG("space",ARG_TYPE_STRING,-1,"SPACE",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
 {MAKE_ARG("noescape",ARG_TYPE_PURE_TOKEN,-1,"NOESCAPE",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
 {MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL|CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/********** JSON_MERGE ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_MERGE history */
+#define JSON_MERGE_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_MERGE tips */
+#define JSON_MERGE_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_MERGE key specs */
+keySpec JSON_MERGE_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_UPDATE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_MERGE argument table */
+struct COMMAND_ARG JSON_MERGE_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("json",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
 /********** JSON_MGET ********************/
@@ -5083,6 +5262,31 @@ keySpec JSON_OBJLEN_Keyspecs[1] = {
 
 /* JSON_OBJLEN argument table */
 struct COMMAND_ARG JSON_OBJLEN_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
+};
+
+/********** JSON_RESP ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* JSON_RESP history */
+#define JSON_RESP_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* JSON_RESP tips */
+#define JSON_RESP_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* JSON_RESP key specs */
+keySpec JSON_RESP_Keyspecs[1] = {
+{NULL,CMD_KEY_RO|CMD_KEY_ACCESS,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* JSON_RESP argument table */
+struct COMMAND_ARG JSON_RESP_Args[] = {
 {MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 {MAKE_ARG("path",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
 };
@@ -13341,15 +13545,18 @@ struct COMMAND_STRUCT serverCommandTable[] = {
 {MAKE_CMD("json.arrpop","Removes and returns the element at an index of the arrays at a path.","O(N) where N is the length of the arrays.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_ARRPOP_History,0,JSON_ARRPOP_Tips,0,jsonArrpopCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_ARRPOP_Keyspecs,1,NULL,2),.args=JSON_ARRPOP_Args},
 {MAKE_CMD("json.arrtrim","Trims the arrays at a path to an inclusive range of indexes.","O(N) where N is the number of elements removed.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_ARRTRIM_History,0,JSON_ARRTRIM_Tips,0,jsonArrtrimCommand,5,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_ARRTRIM_Keyspecs,1,NULL,4),.args=JSON_ARRTRIM_Args},
 {MAKE_CMD("json.clear","Empties containers and resets scalars at a path.","O(N) where N is the number of values removed.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_CLEAR_History,0,JSON_CLEAR_Tips,0,jsonClearCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_CLEAR_Keyspecs,1,NULL,2),.args=JSON_CLEAR_Args},
+{MAKE_CMD("json.debug","A container for JSON debugging commands.","Depends on subcommand.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEBUG_History,0,JSON_DEBUG_Tips,0,NULL,-2,CMD_READONLY,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_SLOW,NULL,JSON_DEBUG_Keyspecs,0,NULL,0),.subcommands=JSON_DEBUG_Subcommands},
 {MAKE_CMD("json.del","Deletes the values at a path, or the key for the root path.","O(N) where N is the number of values deleted.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_DEL_History,0,JSON_DEL_Tips,0,jsonDelCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_DEL_Keyspecs,1,NULL,2),.args=JSON_DEL_Args},
 {MAKE_CMD("json.forget","Deletes the values at a path, or the key for the root path. An alias of JSON.DEL.","O(N) where N is the number of values deleted.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_FORGET_History,0,JSON_FORGET_Tips,0,jsonDelCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_FORGET_Keyspecs,1,NULL,2),.args=JSON_FORGET_Args},
 {MAKE_CMD("json.get","Returns the JSON serialization of the values at one or more paths.","O(N) where N is the size of the values returned.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_GET_History,0,JSON_GET_Tips,0,jsonGetCommand,-2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_GET_Keyspecs,1,NULL,6),.args=JSON_GET_Args},
+{MAKE_CMD("json.merge","Merges a JSON value into the values at a path, following RFC 7396.","O(N) where N is the size of the values merged.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_MERGE_History,0,JSON_MERGE_Tips,0,jsonMergeCommand,4,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,JSON_MERGE_Keyspecs,1,NULL,3),.args=JSON_MERGE_Args},
 {MAKE_CMD("json.mget","Returns the JSON serialization of the values at a path in one or more keys.","O(N) where N is the size of the values returned.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_MGET_History,0,JSON_MGET_Tips,0,jsonMgetCommand,-3,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_MGET_Keyspecs,1,NULL,2),.args=JSON_MGET_Args},
 {MAKE_CMD("json.mset","Sets JSON values at paths in one or more keys.","O(N) where N is the total size of the new values.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_MSET_History,0,JSON_MSET_Tips,0,jsonMsetCommand,-4,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,JSON_MSET_Keyspecs,1,NULL,1),.args=JSON_MSET_Args},
 {MAKE_CMD("json.numincrby","Adds a number to the numbers at a path.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_NUMINCRBY_History,0,JSON_NUMINCRBY_Tips,0,jsonNumincrbyCommand,4,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_NUMINCRBY_Keyspecs,1,NULL,3),.args=JSON_NUMINCRBY_Args},
 {MAKE_CMD("json.nummultby","Multiplies the numbers at a path by a number.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_NUMMULTBY_History,0,JSON_NUMMULTBY_Tips,0,jsonNummultbyCommand,4,CMD_WRITE|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_NUMMULTBY_Keyspecs,1,NULL,3),.args=JSON_NUMMULTBY_Args},
 {MAKE_CMD("json.objkeys","Returns the member names of the objects at a path.","O(N) where N is the number of members returned.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_OBJKEYS_History,0,JSON_OBJKEYS_Tips,0,jsonObjkeysCommand,-2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_OBJKEYS_Keyspecs,1,NULL,2),.args=JSON_OBJKEYS_Args},
 {MAKE_CMD("json.objlen","Returns the number of members of the objects at a path.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_OBJLEN_History,0,JSON_OBJLEN_Tips,0,jsonObjlenCommand,-2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_OBJLEN_Keyspecs,1,NULL,2),.args=JSON_OBJLEN_Args},
+{MAKE_CMD("json.resp","Returns the values at a path in RESP form.","O(N) where N is the size of the values returned.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_RESP_History,0,JSON_RESP_Tips,0,jsonRespCommand,-2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_RESP_Keyspecs,1,NULL,2),.args=JSON_RESP_Args},
 {MAKE_CMD("json.set","Sets the JSON value at a path, creating the key for the root path.","O(N) where N is the size of the new value plus the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_SET_History,0,JSON_SET_Tips,0,jsonSetCommand,-4,CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_SLOW,NULL,JSON_SET_Keyspecs,1,NULL,4),.args=JSON_SET_Args},
 {MAKE_CMD("json.strappend","Appends a string to the strings at a path.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_STRAPPEND_History,0,JSON_STRAPPEND_Tips,0,jsonStrappendCommand,-3,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_WRITE|ACL_CATEGORY_FAST,NULL,JSON_STRAPPEND_Keyspecs,1,NULL,3),.args=JSON_STRAPPEND_Args},
 {MAKE_CMD("json.strlen","Returns the length of the strings at a path.","O(N) where N is the number of values the path matches.","9.2.0",CMD_DOC_NONE,NULL,NULL,"json",COMMAND_GROUP_JSON,JSON_STRLEN_History,0,JSON_STRLEN_Tips,0,jsonStrlenCommand,-2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_JSON|ACL_CATEGORY_READ|ACL_CATEGORY_FAST,NULL,JSON_STRLEN_Keyspecs,1,NULL,2),.args=JSON_STRLEN_Args},

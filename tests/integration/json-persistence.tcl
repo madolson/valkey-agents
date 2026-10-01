@@ -1,6 +1,8 @@
 # Persistence of native JSON keys, and loading of valkey-json module data
 # without the module.
 
+source tests/support/aofmanifest.tcl
+
 set json_docs [list \
     num:1E2 {1E2} \
     num:-0.0 {-0.0} \
@@ -16,6 +18,26 @@ proc json_setup {r docs} {
     foreach {key doc} $docs {
         $r json.set $key . $doc
     }
+}
+
+# Writes through every mutating JSON command, including one that fails after
+# changing the document.
+proc json_mutate {r} {
+    $r json.set obj .a {{"n":1}}
+    $r json.numincrby obj .a.n 2.5
+    $r json.nummultby obj {$..n} 2
+    $r json.strappend str:unicode {"!"}
+    $r json.toggle obj {$.b[1].c[0]}
+    $r json.arrappend obj .b 1 2
+    $r json.arrinsert obj .b 0 {"first"}
+    $r json.arrpop obj .b
+    $r json.arrtrim obj .b 0 2
+    $r json.clear obj {.b[2]}
+    $r json.del obj {.b[2]}
+    $r json.mset int . 43 obj .z null
+    $r json.merge obj . {{"z":null,"m":{"k":1}}}
+    $r json.set deep . {[[1,2],[3]]}
+    catch {$r json.arrinsert deep {$..*} 2 0}
 }
 
 proc json_state {r docs} {
@@ -113,6 +135,18 @@ start_server {} {
         assert_equal $before [json_state r $json_docs]
     }
 
+    test {JSON writes replicate to a replica} {
+        start_server {} {
+            r replicaof [srv -1 host] [srv -1 port]
+            wait_for_sync r
+            json_mutate [srv -1 client]
+            wait_for_ofs_sync [srv -1 client] r
+            assert_equal [json_state [srv -1 client] $json_docs] [json_state r $json_docs]
+            assert_equal {[[1,2,0],[3]]} [r json.get deep]
+            r replicaof no one
+        }
+    }
+
     foreach diskless {no yes} {
         test "JSON keys full sync to a replica (diskless $diskless)" {
             r config set repl-diskless-sync $diskless
@@ -143,6 +177,51 @@ start_server {overrides {appendonly yes aof-use-rdb-preamble no}} {
             assert {[string first $cmd $aof] >= 0}
         }
         assert_match "*JSON.SET\r\n\$3\r\nobj\r\n*PEXPIREAT\r\n\$3\r\nobj\r\n\$13\r\n9999999999999\r\n*" $aof
+    }
+
+    test {JSON writes after an AOF rewrite replay on restart} {
+        json_mutate r
+        set before [json_state r $json_docs]
+        restart_server 0 true false
+        assert_equal $before [json_state r $json_docs]
+        r bgrewriteaof
+        waitForBgrewriteaof r
+        restart_server 0 true false
+        assert_equal $before [json_state r $json_docs]
+    }
+}
+
+set server_path [tmpdir server.json-module-aof]
+set aof_dirpath "$server_path/appendonlydir"
+set aof_basename appendonly.aof
+set aof_manifest_file "$aof_dirpath/$aof_basename$::manifest_suffix"
+set defaults {appendonly yes appendfilename appendonly.aof appenddirname appendonlydir aof-use-rdb-preamble no}
+
+# What the valkey-json module's AOF rewrite writes: JSON.SET key . doc.
+create_aof $aof_dirpath "$aof_dirpath/$aof_basename.1$::base_aof_suffix$::aof_format_suffix" {
+    append_to_aof [formatCommand select 0]
+    append_to_aof [formatCommand JSON.SET num . 1E2]
+    append_to_aof [formatCommand JSON.SET obj . {{"a":[1,-0.0,"x"],"b":{}}}]
+    append_to_aof [formatCommand JSON.SET obj .b.c true]
+    append_to_aof [formatCommand JSON.ARRAPPEND obj .a null]
+    append_to_aof [formatCommand JSON.SET num . 2]
+    append_to_aof [formatCommand JSON.SET deep . {[[[1]]]}]
+}
+create_aof_manifest $aof_dirpath $aof_manifest_file {
+    append_to_manifest "file appendonly.aof.1.base.aof seq 1 type b\n"
+}
+
+start_server_aof [list dir $server_path json.max-path-limit 2] {
+    test {A valkey-json module AOF replays natively} {
+        r select 0
+        assert_equal 2 [r json.get num]
+        assert_equal {{"a":[1,-0.0,"x",null],"b":{"c":true}}} [r json.get obj]
+        assert_equal ReJSON-RL [r type obj]
+    }
+
+    test {AOF replay is not bound by json.max-path-limit} {
+        assert_equal {[[[1]]]} [r json.get deep]
+        assert_error {LIMIT*} {r json.set deep . {[[[1]]]}}
     }
 }
 

@@ -1,0 +1,14 @@
+{
+    "MAX-SIZE-KEY": {
+        "summary": "Returns the largest document in the database and its size.",
+        "complexity": "O(N) where N is the number of values in the database.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": 2,
+        "container": "JSON.DEBUG",
+        "function": "jsonDebugMaxSizeKeyCommand",
+        "acl_categories": [
+            "SLOW"
+        ]
+    }
+}
