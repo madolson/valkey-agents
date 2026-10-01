@@ -104,7 +104,8 @@ wrong:
 
 ### Step 5: commands
 
-All 24 `JSON.*` commands, `src/commands/json-*.json`, and `tests/unit/type/json.tcl`. Behaviour
+All 24 `JSON.*` commands (23 in valkey-json 1.0.3; `JSON.MERGE` exists only on its unstable
+branch and is compared against that build), `src/commands/json-*.json`, and `tests/unit/type/json.tcl`. Behaviour
 that needs explicit tests: `JSON.RESP` re-renders numbers as doubles (unlike `JSON.GET`),
 arithmetic result typing follows the operand literal, `JSON.CLEAR` resets per type, and `JSON.DEL`
 with an explicitly empty path deletes nothing. The harness joins the gate here.
@@ -113,7 +114,9 @@ with an explicitly empty path deletes nothing. The harness joins the gate here.
 
 - Native RDB format stores serialized JSON text, the same thing the module writes at encoding
   version 3. `RDB_VERSION` goes to 82 (`src/rdb.h:53`; 81 is taken by path hash).
-- AOF rewrite emits `JSON.SET key $ <doc>`.
+- AOF rewrite emits `JSON.SET key . <doc>`, matching the module's `aof_rewrite`.
+- Load parses with a nesting limit of 10000 (`JSON_MAX_DEPTH_LIMIT`). The parser is recursive,
+  so an unbounded limit lets a crafted RESTORE payload exhaust the stack.
 - Built-in loader for module type id `ReJSON-RL`. Module type names are 9 characters, so
   `moduleTypeEncodeId()` reproduces the id already in existing files. Encoding version 3 is a
   text parse. Version 0 is refused with a clear error.
@@ -124,15 +127,17 @@ with an explicitly empty path deletes nothing. The harness joins the gate here.
 
 Without these a binary swap fails even though the data migrates.
 
-- **Config routing.** `src/config.c:637` sends every dotted directive to the module config queue
-  before standard config lookup, and `moduleLoadFromQueue()` exits on leftovers
-  (`src/module.c:13492`). A conf file with `json.max-path-limit 128` stops the server. Look dotted
-  names up in the standard config dict first, then register `json.max-document-size` and
-  `json.max-path-limit` under those exact names.
+- **Configs.** Register the three configs valkey-json 1.0.3 has, under its exact names:
+  `json.max-document-size`, `json.max-path-limit` and the hidden `json.debug-mode`. No routing
+  change is needed: `loadServerConfigFromString` already looks a name up in the standard config
+  table before queuing dotted names for modules. `json.max-path-limit` is capped at 10000, the load
+  limit above; the module allows up to `INT_MAX`. A module that registers a config whose full name
+  is already a server config is now refused, since unloading it would otherwise delete the
+  server's config.
 - **INFO.** Add a `json` section answering `INFO json` and `INFO everything` but not default
   `INFO`, matching the module's `json_core_metrics` fields so scrapers keep working.
-- **`JSON.DEBUG`.** Add `MAX-DEPTH-KEY` and `MAX-SIZE-KEY`. Skip `KEYTABLE-*`, which describes
-  interning internals that do not exist natively.
+- **`JSON.DEBUG`** `MAX-DEPTH-KEY` and `MAX-SIZE-KEY` land with the other commands in step 5.
+  `KEYTABLE-*` is skipped; it describes interning internals that do not exist natively.
 
 ## Bloom
 
@@ -144,10 +149,18 @@ Without these a binary swap fails even though the data migrates.
 - **Build flag.** `BUILD_BLOOM=no|module|static`, mirroring `BUILD_LUA` (`src/Makefile:303`) and
   `cmake/Modules/ValkeySetup.cmake`. `static` builds the crate as a `staticlib` and links it with
   `--whole-archive` and `--export-dynamic`, like `libvalkeylua.a`; `-force_load` on macOS. Rust's
-  std links statically, so this adds no runtime library dependency.
-- **Entry points.** Export `ValkeyModule_OnLoad_bloom` and `ValkeyModule_OnUnload_bloom` with
-  `#[no_mangle]` and default visibility, which `moduleLoadStaticSymbol()` resolves by `dlsym` on
-  the running binary (`src/module.c:13923`).
+  std links statically, but its unwinder adds a runtime dependency on `libgcc_s.so.1`.
+- **Entry points.** The module registers as `bf`, its config prefix, and the server resolves a
+  static module's unload function by its registered name. Export `ValkeyModule_OnLoad_bf` and
+  `ValkeyModule_OnUnload_bf` with `#[no_mangle]` and default visibility, which
+  `moduleLoadStaticSymbol()` resolves by `dlsym` on the running binary (`src/module.c:13923`).
+  `MODULE LIST` shows `bf`.
+- **Module options.** Upstream bloom declares only `HANDLE_IO_ERRORS`. While any loaded module
+  lacks the others, the server refuses `CLUSTER MIGRATESLOTS`, disables swapdb async loading and
+  falls back from forkless to fork saves, so a default build would lose all three. The vendored
+  copy also declares `HANDLE_REPL_ASYNC_LOAD`, `HANDLE_ATOMIC_SLOT_MIGRATION` and
+  `HANDLE_FORKLESS`; bloom keeps no state tied to key ownership. This belongs upstream in
+  valkey-bloom.
 - **Startup ordering.** Lua loads at `src/server.c:8177`, after `moduleLoadFromQueue()` at
   `src/server.c:8164` has already exited on any unconsumed module config. Loading bloom at the same
   point means any `bf.bloom-*` line in a conf file kills startup. Bloom loads inside
@@ -158,23 +171,27 @@ Without these a binary swap fails even though the data migrates.
     the staticlib carries two copies of `redismodule.o`: a duplicate symbol under
     `--whole-archive`. Patch the vendored crate.
   - Whole-archive linking runs global constructors before `main()`, before the module API table
-    exists. Assert at startup that no static module touched the API early.
+    exists. Bloom's only one is std's `ARGV_INIT_ARRAY`, which stores argv, and the Rust allocator
+    already aborts with a message if used before OnLoad, so no extra assertion is needed.
   - Static modules share one merged `ValkeyModule_*` pointer table (`__common__` symbols). Test Lua
     and bloom loaded together.
-  - Binary grows about 4.4 MB stripped. Try `--gc-sections` and LTO and record the result.
+  - Whole-archive pulls in all of `nix`, and glibc 2.26 lacks `memfd_create`. Only
+    `nix::unistd::write` is used, so the vendored `nix` dependency drops default features.
+  - Binary grows 4.17 MB stripped, 2.25 MB with Rust LTO (the default). `--gc-sections` saves
+    another 63 KB and is left off.
 
 ### Step 9: bloom tests
 
 - valkey-bloom's Python suite against a `BUILD_BLOOM=static` server with no `--loadmodule`.
 - Tcl test: start with `bf.*` configs in the conf file and a module-written bloom RDB fixture;
   assert the server starts, data loads, and `CONFIG GET bf.*` returns the configured values.
-- Tcl test: `MODULE UNLOAD bloom` is refused.
+- Tcl test: `MODULE UNLOAD bf` is refused.
 
 ## Step 10: default static build
 
 Default `make` produces a server with native JSON and static bloom. Run the full gate once more on
 a clean `make distclean && make`, plus a smoke test of the installed binary: `JSON.SET`, `BF.ADD`,
-`SAVE`, restart, both keys present, `MODULE LIST` shows `bloom` and no JSON module.
+`SAVE`, restart, both keys present, `MODULE LIST` shows `bf` and no JSON module.
 
 ## Decisions
 
