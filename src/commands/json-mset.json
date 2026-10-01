@@ -1,0 +1,61 @@
+{
+    "JSON.MSET": {
+        "summary": "Sets JSON values at paths in one or more keys.",
+        "complexity": "O(N) where N is the total size of the new values.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": -4,
+        "function": "jsonMsetCommand",
+        "command_flags": [
+            "WRITE",
+            "DENYOOM"
+        ],
+        "acl_categories": [
+            "JSON",
+            "WRITE",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "UPDATE"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": -3,
+                        "step": 3,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "data",
+                "type": "block",
+                "multiple": true,
+                "arguments": [
+                    {
+                        "name": "key",
+                        "type": "key",
+                        "key_spec_index": 0
+                    },
+                    {
+                        "name": "path",
+                        "type": "string"
+                    },
+                    {
+                        "name": "json",
+                        "type": "string"
+                    }
+                ]
+            }
+        ]
+    }
+}

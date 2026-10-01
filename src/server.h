@@ -3868,6 +3868,12 @@ size_t jsonTypeMemUsage(robj *o);
 void jsonTypeDigest(unsigned char *digest, robj *o);
 size_t jsonTypeFreeEffort(robj *o, size_t limit);
 sds genJsonInfoString(sds info);
+void jsonSetCommand(client *c);
+void jsonMsetCommand(client *c);
+void jsonGetCommand(client *c);
+void jsonMgetCommand(client *c);
+void jsonDelCommand(client *c);
+void jsonTypeCommand(client *c);
 
 /* Pub / Sub */
 int pubsubUnsubscribeAllChannels(client *c, int notify);

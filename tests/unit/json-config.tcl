@@ -70,7 +70,7 @@ start_server {tags {json needs:debug}} {
         assert_equal [json_info_field json_num_documents] 0
         assert_equal [json_info_field json_total_memory_bytes] 0
 
-        r debug json-set a {{"x":[1,2,3],"y":"hello"}}
+        r json.set a . {{"x":[1,2,3],"y":"hello"}}
         assert_equal [json_info_field json_num_documents] 1
         set one [json_info_field json_total_memory_bytes]
         assert_morethan $one 0
@@ -83,7 +83,7 @@ start_server {tags {json needs:debug}} {
         assert_equal [json_info_field json_num_documents] 2
         assert_equal [json_info_field json_total_memory_bytes] [expr {2 * $one}]
 
-        r debug json-set a {[]}
+        r json.set a . {[]}
         assert_equal [json_info_field json_num_documents] 2
         assert_lessthan [json_info_field json_total_memory_bytes] [expr {2 * $one}]
 
@@ -98,7 +98,7 @@ start_server {tags {json needs:debug}} {
         for {set i 0} {$i < 1000} {incr i} {
             lappend items "\"$i\""
         }
-        r debug json-set big "\[[join $items ,]\]"
+        r json.set big . "\[[join $items ,]\]"
         assert_equal [json_info_field json_num_documents] 1
         r unlink big
         wait_for_condition 50 100 {

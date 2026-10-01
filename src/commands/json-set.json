@@ -1,0 +1,71 @@
+{
+    "JSON.SET": {
+        "summary": "Sets the JSON value at a path, creating the key for the root path.",
+        "complexity": "O(N) where N is the size of the new value plus the number of values the path matches.",
+        "group": "json",
+        "since": "9.2.0",
+        "arity": -4,
+        "function": "jsonSetCommand",
+        "command_flags": [
+            "WRITE",
+            "DENYOOM"
+        ],
+        "acl_categories": [
+            "JSON",
+            "WRITE",
+            "SLOW"
+        ],
+        "key_specs": [
+            {
+                "flags": [
+                    "RW",
+                    "UPDATE"
+                ],
+                "begin_search": {
+                    "index": {
+                        "pos": 1
+                    }
+                },
+                "find_keys": {
+                    "range": {
+                        "lastkey": 0,
+                        "step": 1,
+                        "limit": 0
+                    }
+                }
+            }
+        ],
+        "arguments": [
+            {
+                "name": "key",
+                "type": "key",
+                "key_spec_index": 0
+            },
+            {
+                "name": "path",
+                "type": "string"
+            },
+            {
+                "name": "json",
+                "type": "string"
+            },
+            {
+                "name": "condition",
+                "type": "oneof",
+                "optional": true,
+                "arguments": [
+                    {
+                        "name": "nx",
+                        "type": "pure-token",
+                        "token": "NX"
+                    },
+                    {
+                        "name": "xx",
+                        "type": "pure-token",
+                        "token": "XX"
+                    }
+                ]
+            }
+        ]
+    }
+}

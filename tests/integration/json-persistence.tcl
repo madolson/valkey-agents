@@ -1,6 +1,5 @@
 # Persistence of native JSON keys, and loading of valkey-json module data
-# without the module. JSON keys are created through DEBUG JSON-SET until the
-# JSON commands exist.
+# without the module.
 
 set json_docs [list \
     num:1E2 {1E2} \
@@ -15,14 +14,14 @@ set json_docs [list \
 
 proc json_setup {r docs} {
     foreach {key doc} $docs {
-        $r debug json-set $key $doc
+        $r json.set $key . $doc
     }
 }
 
 proc json_state {r docs} {
     set state {}
     foreach {key doc} $docs {
-        lappend state $key [$r debug json-get $key]
+        lappend state $key [$r json.get $key]
     }
     lappend state [$r debug digest]
     return $state
@@ -48,7 +47,7 @@ proc json_assert_fixture {r} {
     foreach {key get} $expected {
         assert_equal ReJSON-RL [$r type $key]
         assert_equal json [$r object encoding $key]
-        assert_equal $get "\[[$r debug json-get $key]\]"
+        assert_equal $get "\[[$r json.get $key]\]"
     }
 }
 
@@ -139,7 +138,7 @@ start_server {overrides {appendonly yes aof-use-rdb-preamble no}} {
         set aof [read $fd]
         close $fd
         foreach {key doc} $json_docs {
-            set text [r debug json-get $key]
+            set text [r json.get $key]
             set cmd "*4\r\n\$8\r\nJSON.SET\r\n\$[string length $key]\r\n$key\r\n\$1\r\n.\r\n\$[string length $text]\r\n$text\r\n"
             assert {[string first $cmd $aof] >= 0}
         }

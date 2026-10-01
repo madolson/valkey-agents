@@ -1,5 +1,3 @@
-# JSON keys are created through DEBUG JSON-SET until the JSON commands exist.
-
 proc json_array {n} {
     set items {}
     for {set i 0} {$i < $n} {incr i} {
@@ -11,35 +9,35 @@ proc json_array {n} {
 start_server {tags {json needs:debug}} {
     test {JSON key reports the module type name and json encoding} {
         r del doc
-        assert_equal OK [r debug json-set doc {{"a":[1,2,{"b":null}],"c":"x"}}]
+        assert_equal OK [r json.set doc . {{"a":[1,2,{"b":null}],"c":"x"}}]
         assert_equal ReJSON-RL [r type doc]
         assert_equal json [r object encoding doc]
         assert_match {*encoding:json*} [r debug object doc fast]
     }
 
-    test {DEBUG JSON-SET rejects invalid JSON} {
-        assert_error {*SYNTAXERR*} {r debug json-set doc {{"a":}}}
+    test {JSON.SET rejects invalid JSON} {
+        assert_error {*SYNTAXERR*} {r json.set doc . {{"a":}}}
         assert_equal ReJSON-RL [r type doc]
     }
 
     test {Commands for other types reply WRONGTYPE on a JSON key} {
-        r debug json-set doc {[1]}
+        r json.set doc . {[1]}
         assert_error {WRONGTYPE*} {r get doc}
         assert_error {WRONGTYPE*} {r lpush doc x}
     }
 
     test {DEL and EXISTS on a JSON key} {
-        r debug json-set doc {{"a":1}}
+        r json.set doc . {{"a":1}}
         assert_equal 1 [r exists doc]
         assert_equal 1 [r del doc]
         assert_equal 0 [r exists doc]
     }
 
     test {DEBUG DIGEST-VALUE depends on JSON content and member order} {
-        r debug json-set d1 {{"a":1,"b":[true,false]}}
-        r debug json-set d2 {{"a":1,"b":[true,false]}}
-        r debug json-set d3 {{"b":[true,false],"a":1}}
-        r debug json-set d4 {{"a":1.0,"b":[true,false]}}
+        r json.set d1 . {{"a":1,"b":[true,false]}}
+        r json.set d2 . {{"a":1,"b":[true,false]}}
+        r json.set d3 . {{"b":[true,false],"a":1}}
+        r json.set d4 . {{"a":1.0,"b":[true,false]}}
         set digests [r debug digest-value d1 d2 d3 d4]
         assert_equal [lindex $digests 0] [lindex $digests 1]
         assert_not_equal [lindex $digests 0] [lindex $digests 2]
@@ -49,7 +47,7 @@ start_server {tags {json needs:debug}} {
 
     test {COPY duplicates a JSON key} {
         r flushall
-        r debug json-set src {{"a":[1,2,3],"b":{"c":"d"},"n":1E2}}
+        r json.set src . {{"a":[1,2,3],"b":{"c":"d"},"n":1E2}}
         assert_equal 1 [r copy src dst]
         assert_equal ReJSON-RL [r type dst]
         assert_equal json [r object encoding dst]
@@ -57,7 +55,7 @@ start_server {tags {json needs:debug}} {
         assert_equal $digest [r debug digest-value dst]
 
         # The copy is independent of the source.
-        r debug json-set src {"other"}
+        r json.set src . {"other"}
         assert_equal $digest [r debug digest-value dst]
         r del src
         assert_equal $digest [r debug digest-value dst]
@@ -65,7 +63,7 @@ start_server {tags {json needs:debug}} {
 
     test {RENAME keeps the JSON value} {
         r flushall
-        r debug json-set a {[1,"two",{"three":3}]}
+        r json.set a . {[1,"two",{"three":3}]}
         set digest [r debug digest-value a]
         r rename a b
         assert_equal 0 [r exists a]
@@ -75,7 +73,7 @@ start_server {tags {json needs:debug}} {
 
     test {EXPIRE applies to a JSON key} {
         r flushall
-        r debug json-set doc {{"a":1}}
+        r json.set doc . {{"a":1}}
         assert_equal 1 [r expire doc 100]
         assert_range [r ttl doc] 90 100
         assert_equal 1 [r pexpire doc 10]
@@ -88,8 +86,8 @@ start_server {tags {json needs:debug}} {
 
     test {MEMORY USAGE grows with the JSON document} {
         r flushall
-        r debug json-set small {1}
-        r debug json-set big [json_array 1000]
+        r json.set small . {1}
+        r json.set big . [json_array 1000]
         set small [r memory usage small]
         set big [r memory usage big]
         assert_morethan $small 0
@@ -98,8 +96,8 @@ start_server {tags {json needs:debug}} {
 
     test {SCAN TYPE filters JSON keys by their TYPE name} {
         r flushall
-        r debug json-set j1 {{}}
-        r debug json-set j2 {[]}
+        r json.set j1 . {{}}
+        r json.set j2 . {[]}
         r set s1 v
         assert_equal {j1 j2} [lsort [lindex [r scan 0 type ReJSON-RL count 100] 1]]
         assert_equal {j1 j2} [lsort [lindex [r scan 0 type rejson-rl count 100] 1]]
@@ -111,18 +109,18 @@ start_server {tags {json needs:debug}} {
         wait_lazyfree_done r
         r config resetstat
         # An array of n elements is n + 1 values; lazy free starts above 64.
-        r debug json-set small [json_array 63]
+        r json.set small . [json_array 63]
         r unlink small
         wait_lazyfree_done r
         assert_equal 0 [s lazyfreed_objects]
 
-        r debug json-set big [json_array 64]
+        r json.set big . [json_array 64]
         r unlink big
         wait_lazyfree_done r
         assert_equal 1 [s lazyfreed_objects]
 
         # Values are counted at every depth, not just the top level.
-        r debug json-set nested "{\"a\":[json_array 100]}"
+        r json.set nested . "{\"a\":[json_array 100]}"
         r unlink nested
         wait_lazyfree_done r
         assert_equal 2 [s lazyfreed_objects]
@@ -131,7 +129,7 @@ start_server {tags {json needs:debug}} {
     test {FLUSHALL ASYNC frees JSON keys} {
         r flushall
         for {set i 0} {$i < 100} {incr i} {
-            r debug json-set doc:$i [json_array 100]
+            r json.set doc:$i . [json_array 100]
         }
         assert_equal 100 [r dbsize]
         r flushall async
@@ -146,8 +144,174 @@ start_server {tags {json needs:debug}} {
         r config set notify-keyspace-events KA
         assert_equal AK [lindex [r config get notify-keyspace-events] 1]
         r config set notify-keyspace-events $orig
-        assert_equal {} [r acl cat json]
         assert_not_equal -1 [lsearch -exact [r acl cat] json]
+    }
+}
+
+start_server {tags {json}} {
+    test {JSON.SET and JSON.GET at the root and at paths} {
+        r flushall
+        assert_equal OK [r json.set k . {{"a":1,"b":[1,2],"c":{"d":true}}}]
+        assert_equal {{"a":1,"b":[1,2],"c":{"d":true}}} [r json.get k]
+        assert_equal OK [r json.set k .a {"x"}]
+        assert_equal OK [r json.set k {$.c.e} {[]}]
+        assert_equal {{"a":"x","b":[1,2],"c":{"d":true,"e":[]}}} [r json.get k]
+        assert_equal {[1,2]} [r json.get k .b]
+        assert_equal {[[1,2]]} [r json.get k {$.b}]
+        assert_equal {[]} [r json.get k {$.missing}]
+        assert_error {NONEXISTENT JSON path does not exist} {r json.get k .missing}
+        assert_equal {} [r json.get nokey]
+        assert_equal ReJSON-RL [r type k]
+    }
+
+    test {JSON.SET on a new key needs the root path} {
+        r flushall
+        assert_error {SYNTAXERR A new Valkey key's path must be root} {r json.set k .a 1}
+        assert_equal 0 [r exists k]
+        assert_equal OK [r json.set k {$} 1]
+        assert_equal 1 [r json.get k]
+    }
+
+    test {JSON.SET errors} {
+        r flushall
+        r set s v
+        assert_error {WRONGTYPE Not a JSON document key} {r json.set s . 1}
+        assert_error {SYNTAXERR Command syntax error} {r json.set k . 1 YY}
+        assert_error {*wrong number of arguments*} {r json.set k . 1 NX XX}
+        assert_error {SYNTAXERR Failed to parse JSON string due to syntax error} {r json.set k . {{"a":}}}
+        r json.set k . {{"a":1}}
+        assert_error {NONEXISTENT JSON path does not exist} {r json.set k .x.y 1}
+        assert_error {ERROR Cannot insert a member into a non-object value} {r json.set k {$.a.b} 1}
+        assert_error {SYNTAXERR*} {r json.set k {.a[} 1}
+    }
+
+    test {JSON.SET through a wildcard that matches nothing is a no-op} {
+        r flushall
+        r json.set k . {{"a":{}}}
+        assert_equal OK [r json.set k {$..nothing.x} 1]
+        assert_equal OK [r json.set k {$.a.*} 1]
+        assert_equal {{"a":{}}} [r json.get k]
+        assert_equal OK [r json.set k {$.*.x} 1]
+        assert_equal {{"a":{"x":1}}} [r json.get k]
+    }
+
+    test {JSON.SET NX and XX} {
+        r flushall
+        assert_equal {} [r json.set k . 1 XX]
+        assert_equal 0 [r exists k]
+        assert_equal OK [r json.set k . {{"a":1}} NX]
+        assert_equal {} [r json.set k . 2 NX]
+        assert_equal {} [r json.set k .a 2 NX]
+        assert_equal {} [r json.set k .b 2 XX]
+        assert_equal OK [r json.set k .a 2 xx]
+        assert_equal OK [r json.set k .b 3 nx]
+        assert_equal {{"a":2,"b":3}} [r json.get k]
+        # NX and XX are checked before the value is parsed.
+        assert_equal {} [r json.set k .a {not json} NX]
+    }
+
+    test {JSON.SET at the root drops the TTL, at a path keeps it} {
+        r flushall
+        r json.set k . {{"a":1}}
+        r expire k 100
+        r json.set k .a 2
+        assert_range [r ttl k] 90 100
+        r json.set k {$} 3
+        assert_equal -1 [r ttl k]
+    }
+
+    test {JSON.SET enforces json.max-path-limit} {
+        r flushall
+        r config set json.max-path-limit 3
+        assert_equal OK [r json.set k . {[[[1]]]}]
+        assert_error {LIMIT Document path nesting limit is exceeded} {r json.set k . {[[[[1]]]]}}
+        r json.set k . {{"a":{"b":1}}}
+        assert_equal OK [r json.set k .a.b {[]}]
+        assert_error {LIMIT Document path nesting limit is exceeded} {r json.set k .a.b {[[]]}}
+        r config set json.max-path-limit 128
+        assert_equal OK [r json.set k . "[string repeat {[} 128][string repeat {]} 128]"]
+        assert_error {LIMIT*} {r json.set k . "[string repeat {[} 129][string repeat {]} 129]"}
+    }
+
+    test {JSON.GET formatting options} {
+        r flushall
+        r json.set k . {{"a":1,"b":[1,2],"c":{}}}
+        assert_equal "{\n  \"a\": 1,\n  \"b\": \[\n    1,\n    2\n  \],\n  \"c\": {}\n}" \
+            [r json.get k INDENT "  " NEWLINE "\n" SPACE " "]
+        assert_equal "\[\n\t\[\n\t\t1,\n\t\t2\n\t\]\n\]" [r json.get k indent "\t" newline "\n" {$.b}]
+        assert_equal {{"a":1,"b":[1,2],"c":{}}} [r json.get k NOESCAPE]
+        assert_error {SYNTAXERR Command syntax error} {r json.get k INDENT}
+    }
+
+    test {JSON.GET with several paths} {
+        r flushall
+        r json.set k . {{"a":1,"b":[1,2]}}
+        assert_equal {{".a":1,".b":[1,2]}} [r json.get k .a .b]
+        assert_error {NONEXISTENT JSON path does not exist} {r json.get k .a .missing}
+        # One JSONPath makes every path JSONPath.
+        assert_equal {{".a":[1],"$.b":[[1,2]],".missing":[]}} [r json.get k .a {$.b} .missing]
+        assert_equal "{\n\t\".a\":\[\n\t\t1\n\t\],\n\t\"\$.b\":\[\n\t\t\[\n\t\t\t1,\n\t\t\t2\n\t\t\]\n\t\]\n}" \
+            [r json.get k INDENT "\t" NEWLINE "\n" .a {$.b}]
+    }
+
+    test {JSON.MGET} {
+        r flushall
+        r json.set a . {{"x":1}}
+        r json.set b . {{"x":[2]}}
+        r json.set c . {{"y":3}}
+        assert_equal {1 {[2]} {} {}} [r json.mget a b c nokey .x]
+        assert_equal {{[1]} {[[2]]} {[]} {}} [r json.mget a b c nokey {$.x}]
+        assert_error {SYNTAXERR Expression token cannot be empty} {r json.mget a b c nokey {.x[}}
+        r set s v
+        assert_error {WRONGTYPE Not a JSON document key} {r json.mget a s .x}
+    }
+
+    test {JSON.MSET applies each triple on a best-effort basis} {
+        r flushall
+        r json.set a . {{"x":1}}
+        assert_equal OK [r json.mset a .x 2 b . {[]} a .y {"z"}]
+        assert_equal {{"x":2,"y":"z"}} [r json.get a]
+        assert_equal {[]} [r json.get b]
+        # Validated against the keyspace before anything is applied.
+        assert_error {SYNTAXERR Command syntax error} {r json.mset a .x 3 new .x 1}
+        assert_error {NONEXISTENT JSON path does not exist} {r json.mset a .x 3 a .q.r 1}
+        assert_error {SYNTAXERR Failed to parse*} {r json.mset a .x 3 b . {[}}
+        assert_equal 2 [r json.get a .x]
+        # A triple that no longer applies after an earlier one is skipped.
+        assert_equal OK [r json.mset a . 5 a .x 6]
+        assert_equal 5 [r json.get a]
+        assert_error {*wrong number of arguments*} {r json.mset a .x 1 b}
+    }
+
+    test {JSON.DEL and JSON.FORGET} {
+        r flushall
+        r json.set k . {{"a":1,"b":{"a":2},"c":[1,2,3]}}
+        assert_equal 0 [r json.del nokey]
+        assert_equal 0 [r json.del k .missing]
+        assert_equal 0 [r json.del k {$.missing}]
+        assert_equal 0 [r json.del k {}]
+        assert_equal 2 [r json.del k {$..a}]
+        assert_equal {{"b":{},"c":[1,2,3]}} [r json.get k]
+        assert_equal 2 [r json.forget k {$.c[0,2]}]
+        assert_equal {{"b":{},"c":[2]}} [r json.get k]
+        assert_error {ERROR Cannot insert a member into a non-object value} {r json.del k {.c.x}}
+        assert_equal 1 [r json.del k]
+        assert_equal 0 [r exists k]
+        r json.set k . 1
+        assert_equal 1 [r json.forget k {$}]
+        assert_equal 0 [r exists k]
+    }
+
+    test {JSON.TYPE} {
+        r flushall
+        r json.set k . {{"n":null,"t":true,"s":"x","i":1,"d":1.0,"u":18446744073709551615,"o":{},"a":[]}}
+        assert_equal object [r json.type k]
+        assert_equal {null boolean string integer number number object array} [r json.type k {$.*}]
+        assert_equal integer [r json.type k .i]
+        assert_equal {} [r json.type k .missing]
+        assert_equal {} [r json.type k {.i.*}]
+        assert_equal {} [r json.type k {$.missing}]
+        assert_equal {} [r json.type nokey]
     }
 }
 
@@ -206,7 +370,7 @@ set ::json_persist_docs [list \
 
 proc json_persist_setup {} {
     foreach {key doc} $::json_persist_docs {
-        r debug json-set $key $doc
+        r json.set $key . $doc
     }
 }
 
@@ -214,7 +378,7 @@ proc json_persist_setup {} {
 proc json_persist_state {} {
     set state {}
     foreach {key doc} $::json_persist_docs {
-        lappend state $key [r debug json-get $key] [r debug digest-value $key]
+        lappend state $key [r json.get $key] [r debug digest-value $key]
     }
     lappend state [r debug digest]
     return $state
@@ -225,9 +389,9 @@ start_server {tags {json needs:debug}} {
         r flushall
         json_persist_setup
         set before [json_persist_state]
-        assert_equal {1E2} [r debug json-get num:1E2]
-        assert_equal {-0.0} [r debug json-get num:-0.0]
-        assert_equal {0.30000000000000004} [r debug json-get num:0.3]
+        assert_equal {1E2} [r json.get num:1E2]
+        assert_equal {-0.0} [r json.get num:-0.0]
+        assert_equal {0.30000000000000004} [r json.get num:0.3]
         r debug reload
         assert_equal $before [json_persist_state]
         assert_equal ReJSON-RL [r type obj:order]
@@ -236,14 +400,14 @@ start_server {tags {json needs:debug}} {
 
     test {JSON key formats that differ only in whitespace reload to the compact text} {
         r flushall
-        r debug json-set ws " {\n  \"a\" : \[ 1 , 2 \] ,\t\"b\" : { } \r\n} "
+        r json.set ws . " {\n  \"a\" : \[ 1 , 2 \] ,\t\"b\" : { } \r\n} "
         r debug reload
-        assert_equal {{"a":[1,2],"b":{}}} [r debug json-get ws]
+        assert_equal {{"a":[1,2],"b":{}}} [r json.get ws]
     }
 
     test {DEBUG OBJECT reports a serialized length for JSON keys} {
         r flushall
-        r debug json-set doc {{"a":"b"}}
+        r json.set doc . {{"a":"b"}}
         assert_match {*encoding:json serializedlength:10 *} [r debug object doc]
     }
 
@@ -254,12 +418,12 @@ start_server {tags {json needs:debug}} {
             set payload [r dump $key]
             assert_equal 24 [scan [string index $payload 0] %c]
             r restore $key:copy 0 $payload
-            assert_equal [r debug json-get $key] [r debug json-get $key:copy]
+            assert_equal [r json.get $key] [r json.get $key:copy]
             assert_equal [r debug digest-value $key] [r debug digest-value $key:copy]
         }
         assert_error {BUSYKEY*} {r restore num:1E2 0 [r dump num:1e2]}
         r restore num:1E2 0 [r dump num:1e2] replace
-        assert_equal 1e2 [r debug json-get num:1E2]
+        assert_equal 1e2 [r json.get num:1E2]
     }
 
     test {RESTORE loads a valkey-json module value natively} {
@@ -269,7 +433,7 @@ start_server {tags {json needs:debug}} {
         r debug set-skip-checksum-validation 0
         assert_equal ReJSON-RL [r type doc]
         assert_equal json [r object encoding doc]
-        assert_equal {{"a":[1E2,-0.0,"x"]}} [r debug json-get doc]
+        assert_equal {{"a":[1E2,-0.0,"x"]}} [r json.get doc]
     } {} {needs:debug}
 
     test {RESTORE refuses valkey-json module values at encoding version 0} {
@@ -311,9 +475,9 @@ start_server {tags {json needs:debug}} {
         catch {r restore deeper 0 [json_native_payload "\[$deep\]"]} err
         r debug set-skip-checksum-validation 0
         assert_match {*Bad data format*} $err
-        assert_equal $deep [r debug json-get deep]
+        assert_equal $deep [r json.get deep]
         r debug reload
-        assert_equal $deep [r debug json-get deep]
+        assert_equal $deep [r json.get deep]
         assert_equal 0 [r exists deeper]
     } {} {needs:debug}
 }
