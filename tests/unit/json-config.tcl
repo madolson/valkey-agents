@@ -51,7 +51,7 @@ start_server {tags {json external:skip} config "default.conf" args {--json.max-p
 test {Unknown dotted config without its module still aborts startup} {
     catch {exec $::VALKEY_SERVER_BIN --json.no-such-config 1} err
     assert_match {*Module Configuration detected without loadmodule directive or no ApplyConfig call: aborting*} $err
-    catch {exec $::VALKEY_SERVER_BIN --bf.bloom-capacity 100} err
+    catch {exec $::VALKEY_SERVER_BIN --nosuchmodule.capacity 100} err
     assert_match {*Module Configuration detected without loadmodule directive or no ApplyConfig call: aborting*} $err
 } {} {external:skip}
 
