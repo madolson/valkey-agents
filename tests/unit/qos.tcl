@@ -757,3 +757,55 @@ start_server {tags {"qos external:skip"}} {
 
 
 
+start_server {tags {"qos external:skip ipv6"} overrides {bind {127.0.0.1 ::1} priority-subnets ::1/128 maxclients 4 maxclients-reserved 2}} {
+    test {Replica promoted to priority is counted until it disconnects} {
+        set primary [srv 0 client]
+        set primary_host [srv 0 host]
+        set primary_port [srv 0 port]
+
+        # The test client connects over 127.0.0.1 (normal). p connects over ::1 (priority).
+        set p [valkey ::1 $primary_port 0 $::tls]
+        $p ping
+        assert_match "*connected_priority_clients:1*" [$primary info clients]
+
+        start_server {} {
+            # The replica connects from 127.0.0.1, so it is normal when linked
+            # and upgraded to priority by SYNC.
+            r replicaof $primary_host $primary_port
+            wait_for_sync r
+            assert_match "*connected_priority_clients:2*" [$primary info clients]
+
+            r replicaof no one
+            wait_for_condition 50 100 {
+                [string match "*connected_slaves:0*" [$primary info replication]]
+            } else {
+                fail "replica did not disconnect"
+            }
+        }
+
+        assert_match "*connected_priority_clients:1*" [$primary info clients]
+
+        # A replica that is already priority when linked is counted once.
+        start_server {} {
+            r replicaof ::1 $primary_port
+            wait_for_sync r
+            assert_match "*connected_priority_clients:2*" [$primary info clients]
+
+            r replicaof no one
+            wait_for_condition 50 100 {
+                [string match "*connected_slaves:0*" [$primary info replication]]
+            } else {
+                fail "replica did not disconnect"
+            }
+        }
+
+        assert_match "*connected_priority_clients:1*" [$primary info clients]
+
+        # Normal limit is 4 - 2 = 2 and only the test client is normal, so a
+        # second normal client must be admitted.
+        set c [valkey_client]
+        assert_equal {PONG} [$c ping]
+        $c close
+        $p close
+    }
+}
