@@ -5288,6 +5288,16 @@ int zsetInitLexRange(ValkeyModuleKey *key, ValkeyModuleString *min, ValkeyModule
         orderedIndexInitIterator(&key->u.zset.oi, zs->oi);
         orderedIndexSeekToLexRange(&key->u.zset.oi, zlrs->min, zlrs->max, zlrs->minex, zlrs->maxex, first ? 0 : -1);
         key->u.zset.current = first ? orderedIndexNext(&key->u.zset.oi) : orderedIndexPrev(&key->u.zset.oi);
+        /* The seek only honors the bound on the side we start from, so the
+         * element it lands on can be past the opposite bound. */
+        if (key->u.zset.current) {
+            const char *ele;
+            size_t ele_len;
+            orderedIndexItemGetElement(key->u.zset.current, &ele, &ele_len);
+            if (first ? !zsetLexLteMax(ele, ele_len, zlrs) : !zsetLexGteMin(ele, ele_len, zlrs)) {
+                key->u.zset.current = NULL;
+            }
+        }
     } else {
         serverPanic("Unsupported zset encoding");
     }

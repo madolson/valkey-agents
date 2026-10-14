@@ -103,6 +103,20 @@ start_server {tags {"modules"}} {
         assert_equal {ele0 ele1 ele2 ele3} [lsort [r zset.members k]]
     }
 
+    foreach {encoding entries} {listpack 128 btree 0} {
+        test "Module zset lex range with no matching elements - $encoding" {
+            r config set zset-max-listpack-entries $entries
+            r del k
+            r zadd k 0 a 0 c 0 e
+            assert_encoding $encoding k
+            # Gap between members, crossed, empty exclusive, and past either end.
+            foreach {min max} {{[b} {[b} {[c} {[a} {(c} {(c} {[f} + - {(a}} {
+                assert_equal {} [r zset.rangebylex k $min $max]
+                assert_equal {} [r zset.revrangebylex k $min $max]
+            }
+        }
+    }
+
     test "Unload the module - zset" {
         assert_equal {OK} [r module unload zset]
     }
