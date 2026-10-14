@@ -119,4 +119,28 @@ start_cluster 2 2 {tags {socket-prioritization external:skip cluster}} {
             fail "Slot 0 was not migrated to R1"
         }
     }
+
+    test "priority-subnets change keeps slot migration links prioritized" {
+        R 1 DEBUG slotmigration prevent-failover 1
+        assert_equal "OK" [R 0 CLUSTER MIGRATESLOTS SLOTSRANGE 1 1 NODE [R 1 CLUSTER MYID]]
+        wait_for_condition 100 50 {
+            [R 0 client list flags EH] ne "" && [R 1 client list flags iH] ne ""
+        } else {
+            fail "Slot migration links were not prioritized"
+        }
+
+        foreach subnets {192.0.2.1/32 {}} {
+            R 0 config set priority-subnets $subnets
+            R 1 config set priority-subnets $subnets
+            assert_match "*flags=*H*" [R 0 client list flags E]
+            assert_match "*flags=*H*" [R 1 client list flags i]
+        }
+
+        R 1 DEBUG slotmigration prevent-failover 0
+        wait_for_condition 100 50 {
+            [local_is_slot_migrated 1 1]
+        } else {
+            fail "Slot 1 was not migrated to R1"
+        }
+    }
 }

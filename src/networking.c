@@ -1991,6 +1991,15 @@ static void reclassifyClientsPriority(void) {
         client *c = listNodeValue(ln);
         if (!c->conn) continue;
 
+        /* Replication and slot migration links are prioritized regardless of
+         * priority-subnets, so a subnet change must not demote them. */
+        int type = getClientType(c);
+        if (type == CLIENT_TYPE_PRIMARY || type == CLIENT_TYPE_REPLICA ||
+            type == CLIENT_TYPE_SLOT_IMPORT || type == CLIENT_TYPE_SLOT_EXPORT) {
+            if (connIsPriority(c->conn)) count++;
+            continue;
+        }
+
         char ip[CONN_ADDR_STR_LEN];
         int port = 0;
         if (connAddrPeerName(c->conn, ip, sizeof(ip), &port) != C_OK) {

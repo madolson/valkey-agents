@@ -65,6 +65,28 @@ start_server {tags {"socket-prioritization"}} {
         }
     } {} {external:skip}
 
+    test {Socket Prioritization: priority-subnets change keeps replication links prioritized} {
+        start_server {} {
+            set replica [srv 0 client]
+            set primary [srv -1 client]
+
+            $replica replicaof [srv -1 host] [srv -1 port]
+            wait_for_sync $replica
+            wait_for_ofs_sync $primary $replica
+
+            foreach subnets {192.0.2.1/32 {}} {
+                $primary config set priority-subnets $subnets
+                $replica config set priority-subnets $subnets
+                assert_match "*flags=*H*" [$primary client list type replica]
+                assert_match "*flags=*H*" [$replica client list type master]
+                assert_match "*connected_priority_clients:1*" [$primary info clients]
+                assert_match "*connected_priority_clients:1*" [$replica info clients]
+            }
+
+            $replica replicaof no one
+        }
+    } {} {external:skip}
+
     foreach io_threads {1 4} {
         test "Verify replication connection upgrade (io-threads=$io_threads)" {
             set primary [srv 0 client]
