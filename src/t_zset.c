@@ -2669,8 +2669,10 @@ void genericZrangebyscoreCommand(zrange_result_handler *handler,
 
     handler->beginResultEmission(handler, -1);
 
-    /* For invalid offset, return directly. */
-    if (offset > 0 && offset >= (long)zsetLength(zobj)) {
+    /* For invalid offset, return directly. A negative offset selects nothing,
+     * as on the listpack path, and must not reach orderedIndexSeekToScoreRange,
+     * which reads a negative offset as a reverse scan from max. */
+    if (offset < 0 || (offset > 0 && offset >= (long)zsetLength(zobj))) {
         handler->finalizeResultEmission(handler, 0);
         return;
     }
@@ -2902,6 +2904,14 @@ void genericZrangebylexCommand(zrange_result_handler *handler,
     unsigned long rangelen = 0;
 
     handler->beginResultEmission(handler, -1);
+
+    /* A negative offset selects nothing, as on the listpack path, and must not
+     * reach orderedIndexSeekToLexRange, which reads a negative offset as a
+     * reverse scan from max. */
+    if (offset < 0) {
+        handler->finalizeResultEmission(handler, 0);
+        return;
+    }
 
     if (zobj->encoding == OBJ_ENCODING_LISTPACK) {
         unsigned char *zl = objectGetVal(zobj);
