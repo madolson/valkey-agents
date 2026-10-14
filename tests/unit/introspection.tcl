@@ -940,6 +940,12 @@ start_server {tags {"introspection"}} {
         $rd2 close
     } {0} {"needs:debug"}
 
+    test {DEBUG unknown subcommand returns syntax error without cluster mode} {
+        assert_error "*unknown subcommand or wrong number of arguments for 'foo'*" {r debug foo}
+        assert_error "*only available for cluster mode*" {r debug clusterlink kill all abc}
+        assert_error "*only available for cluster mode*" {r debug cluster-replica-priority abc}
+    } {} {needs:debug cluster:skip}
+
     test {CLIENT KILL SKIPME YES/NO will kill all clients} {
         # Kill all clients except `me`
         set rd1 [valkey_deferring_client]

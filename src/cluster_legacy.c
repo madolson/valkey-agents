@@ -8236,12 +8236,11 @@ int clusterNodeIsPrimary(clusterNode *n) {
 }
 
 int handleDebugClusterCommand(client *c) {
-    if (!server.cluster_enabled) {
-        addReplyError(c, "Debug option only available for cluster mode enabled setup!");
-        return 1;
-    }
-
     if (c->argc == 5 && !strcasecmp(objectGetVal(c->argv[1]), "CLUSTERLINK") && !strcasecmp(objectGetVal(c->argv[2]), "KILL")) {
+        if (!server.cluster_enabled) {
+            addReplyError(c, "Debug option only available for cluster mode enabled setup!");
+            return 1;
+        }
         /* Find the node. */
         clusterNode *n = clusterLookupNode(objectGetVal(c->argv[4]), sdslen(objectGetVal(c->argv[4])));
         if (!n) {
@@ -8268,6 +8267,10 @@ int handleDebugClusterCommand(client *c) {
         addReply(c, shared.ok);
         return 1;
     } else if (c->argc == 3 && !strcasecmp(objectGetVal(c->argv[1]), "CLUSTER-REPLICA-PRIORITY")) {
+        if (!server.cluster_enabled) {
+            addReplyError(c, "Debug option only available for cluster mode enabled setup!");
+            return 1;
+        }
         /* Return the replica priority this node currently knows about the given
          * node, as learned via gossip. This makes the value used for auto failover
          * ranking observable for debugging and testing. */
