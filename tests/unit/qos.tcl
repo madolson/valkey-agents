@@ -671,6 +671,61 @@ start_server {tags {"qos"}} {
         r config set priority-subnets ""
     }
 
+    tags {"external:skip ipv6"} {
+        test {Replica promoted to priority is counted until it disconnects} {
+            set old_bind [lindex [r config get bind] 1]
+            set port [srv 0 port]
+            r config set bind "127.0.0.1 ::1"
+            r config set maxclients 4
+            r config set maxclients-reserved 2
+            r config set priority-subnets "::1/128"
+
+            # r connects over 127.0.0.1 (normal). p connects over ::1 (priority).
+            set p [valkey ::1 $port 0 $::tls]
+            $p ping
+            assert_match "*connected_priority_clients:1*" [r info clients]
+
+            # A replica from 127.0.0.1 is normal when linked and upgraded to
+            # priority by SYNC.
+            set repl [attach_to_replication_stream]
+            assert_match "*connected_priority_clients:2*" [r info clients]
+            close_replication_stream $repl
+            wait_for_condition 50 100 {
+                [string match "*connected_slaves:0*" [r info replication]]
+            } else {
+                fail "replica did not disconnect"
+            }
+            assert_match "*connected_priority_clients:1*" [r info clients]
+
+            # A replica that is already priority when linked is counted once.
+            set repl [valkey ::1 $port 1 $::tls]
+            $repl sync
+            wait_for_condition 50 100 {
+                [string match "*connected_slaves:1*" [r info replication]]
+            } else {
+                fail "replica did not connect"
+            }
+            assert_match "*connected_priority_clients:2*" [r info clients]
+            $repl close
+            wait_for_condition 50 100 {
+                [string match "*connected_slaves:0*" [r info replication]]
+            } else {
+                fail "replica did not disconnect"
+            }
+            assert_match "*connected_priority_clients:1*" [r info clients]
+
+            # Normal limit is 4 - 2 = 2 and only r is normal, so a second
+            # normal client must be admitted.
+            set c [valkey_client]
+            assert_equal {PONG} [$c ping]
+            $c close
+            $p close
+            r config set bind $old_bind
+            r config set maxclients-reserved 0
+            r config set priority-subnets ""
+        }
+    }
+
     } qos_test_script_err]
 
     # Restore global configs
@@ -757,55 +812,3 @@ start_server {tags {"qos external:skip"}} {
 
 
 
-start_server {tags {"qos external:skip ipv6"} overrides {bind {127.0.0.1 ::1} priority-subnets ::1/128 maxclients 4 maxclients-reserved 2}} {
-    test {Replica promoted to priority is counted until it disconnects} {
-        set primary [srv 0 client]
-        set primary_host [srv 0 host]
-        set primary_port [srv 0 port]
-
-        # The test client connects over 127.0.0.1 (normal). p connects over ::1 (priority).
-        set p [valkey ::1 $primary_port 0 $::tls]
-        $p ping
-        assert_match "*connected_priority_clients:1*" [$primary info clients]
-
-        start_server {} {
-            # The replica connects from 127.0.0.1, so it is normal when linked
-            # and upgraded to priority by SYNC.
-            r replicaof $primary_host $primary_port
-            wait_for_sync r
-            assert_match "*connected_priority_clients:2*" [$primary info clients]
-
-            r replicaof no one
-            wait_for_condition 50 100 {
-                [string match "*connected_slaves:0*" [$primary info replication]]
-            } else {
-                fail "replica did not disconnect"
-            }
-        }
-
-        assert_match "*connected_priority_clients:1*" [$primary info clients]
-
-        # A replica that is already priority when linked is counted once.
-        start_server {} {
-            r replicaof ::1 $primary_port
-            wait_for_sync r
-            assert_match "*connected_priority_clients:2*" [$primary info clients]
-
-            r replicaof no one
-            wait_for_condition 50 100 {
-                [string match "*connected_slaves:0*" [$primary info replication]]
-            } else {
-                fail "replica did not disconnect"
-            }
-        }
-
-        assert_match "*connected_priority_clients:1*" [$primary info clients]
-
-        # Normal limit is 4 - 2 = 2 and only the test client is normal, so a
-        # second normal client must be admitted.
-        set c [valkey_client]
-        assert_equal {PONG} [$c ping]
-        $c close
-        $p close
-    }
-}

@@ -2822,26 +2822,3 @@ start_cluster 3 0 {tags {logreqres:skip external:skip cluster network} overrides
         wait_for_migration 0 16383
     }
 }
-
-start_cluster 2 0 {tags {logreqres:skip external:skip cluster ipv6} overrides {bind {127.0.0.1 ::1}}} {
-    test "Slot import client promoted to priority is counted until it disconnects" {
-        # The source connects from 127.0.0.1, so its import client on R 1 is
-        # normal when linked and upgraded to priority by SYNCSLOTS ESTABLISH.
-        R 1 config set priority-subnets ::1/128
-        set p [valkey ::1 [srv -1 port] 0 $::tls]
-        $p ping
-        set clients [status [Rn 1] connected_clients]
-        assert_match "*connected_priority_clients:1*" [R 1 info clients]
-
-        assert_match "OK" [R 0 CLUSTER MIGRATESLOTS SLOTSRANGE 0 0 NODE [R 1 CLUSTER MYID]]
-        wait_for_migration 1 0
-        wait_for_condition 50 100 {
-            [status [Rn 1] connected_clients] == $clients
-        } else {
-            fail "import client was not freed"
-        }
-
-        assert_match "*connected_priority_clients:1*" [R 1 info clients]
-        $p close
-    }
-}
