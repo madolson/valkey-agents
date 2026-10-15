@@ -350,6 +350,8 @@ start_server {tags {"incr"}} {
         assert_error "ERR value is not a valid float" {r increx foo byfloat 1}
     }
 
+    # These overflow tests can't be executed on x86 when valgrind is enabled,
+    # valgrind simulation will return a finite result on 1e4932 + 1e4932
     test {INCREX BYFLOAT positive arithmetic overflow returns [curr_val, 0]} {
         set big [ldbl_overflow_operand]
         r del foo
